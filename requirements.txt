@@ -1,0 +1,29 @@
+# 八千代 Agent · 运行依赖
+#
+# 这是"人维护的直接依赖"，不是 `pip freeze` 的输出。
+# 用宽松约束，避免锁死用户环境。
+#
+# 安装：
+#   & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
+# 若国内镜像缺包：
+#   & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt `
+#       --extra-index-url https://pypi.org/simple
+
+# UI（Flet 1.0：flet / flet-cli / flet-desktop 锁步发布）
+flet[all]>=1.0.0,<2
+
+# API Key 落盘 → 操作系统凭据管理器
+flet-secure-storage>=1.0.0,<2
+
+# 统一的模型调用层（支持任意 OpenAI 兼容端点）
+litellm>=1.100
+
+# 异步 SQLite（给会话/记忆落库用）
+aiosqlite>=0.20
+
+# 配置校验
+pydantic>=2.10,<3
+
+# 开发/测试
+pytest>=8
+pytest-asyncio>=0.24

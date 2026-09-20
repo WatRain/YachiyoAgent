@@ -8,6 +8,10 @@ env/
 .env.*
 !.env.example
 
+# 本地文档：教程、打包清单、agent loop 说明
+# 决定不随代码上传（含本地路径与产品思路）。文件仍在本机，随时可读。
+docs/
+
 # 用户数据 / 运行时
 .devdata/
 .flet/
@@ -19,6 +23,9 @@ env/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_tmp/
+.ptmp/
+pytest-cache-files-*/
 .mypy_cache/
 .ruff_cache/
 
@@ -26,3 +33,6 @@ __pycache__/
 dist/
 build/
 *.spec
+
+# 打包时临时下载的 wheel
+wheels/

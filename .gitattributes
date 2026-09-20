@@ -1,18 +1,26 @@
-# 默认：自动识别文本文件，仓库里统一存 LF
- text=auto eol=lf
+# 换行符规范化。
+#
+# 第一行是全局默认：所有文件自动识别文本/二进制，文本在仓库里统一存 LF。
+# 注意开头那个 * 是必须的 —— 它就是这个规则的模式；少了它整行都失效。
+* text=auto eol=lf
 
 # Windows 专用脚本必须用 CRLF，否则可能执行失败
-.bat text eol=crlf
-.cmd text eol=crlf
-.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
 
-# 二进制文件不要动（这些是关键，写错会损坏文件）
-.ico binary
-.png binary
-.jpg binary
-.webp binary
-.ttf binary
-.otf binary
-.db binary
-.exe binary
-.dll binary
+# 二进制文件：标记为 binary 等于"不要做任何换行符转换"，这是保护，不是分类
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.exe binary
+*.dll binary
+*.db binary
+*.zip binary
