@@ -1,0 +1,18 @@
+# 默认：自动识别文本文件，仓库里统一存 LF
+ text=auto eol=lf
+
+# Windows 专用脚本必须用 CRLF，否则可能执行失败
+.bat text eol=crlf
+.cmd text eol=crlf
+.ps1 text eol=crlf
+
+# 二进制文件不要动（这些是关键，写错会损坏文件）
+.ico binary
+.png binary
+.jpg binary
+.webp binary
+.ttf binary
+.otf binary
+.db binary
+.exe binary
+.dll binary
