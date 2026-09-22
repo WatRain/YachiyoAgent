@@ -13,10 +13,11 @@
       （用 destroy() 的话是硬销毁，存不下来）
 
 关于最小化：
-  Flet 1.0 的 ft.Window 上**没有** minimize() / maximize() / restore()
-  （只有 close / destroy / center / to_front / start_dragging / start_resizing）。
-  所以这条栏只提供"关闭"。想最小化，点任务栏上的窗口按钮一样可以。
-  以后如果要自己做缩放边框，Window.start_resizing(edge) 是现成的入口。
+  Flet 1.0 的 ft.Window 上**没有** minimize() 这个方法，但有 `minimized` 属性 ——
+  文档原文 "Set to True to minimize programmatically"。
+  （我一开始只查了方法名，漏了这个属性，白说了一句"Flet 做不了最小化"。）
+  改完属性要 page.update() 才会推到客户端。
+  也没有 maximize()/restore()，不过有 `maximized` 属性，要的话同理。
 """
 
 from __future__ import annotations
@@ -28,11 +29,32 @@ from app import theme as T
 BAR_HEIGHT = 34        # 比原生标题栏略窄一点，视觉上更轻
 
 
-def build_title_bar(on_close) -> ft.Control:
+def _window_button(icon, tooltip: str, handler) -> ft.IconButton:
+    """标题栏上的一个小圆角按钮（最小化 / 关闭共用）。
+
+    handler 是**无参**函数：这样调用方不会写成 on_click=lambda e: handler(e)，
+    也就不会踩"签名对不上"那个老坑。
+    """
+    return ft.IconButton(
+        icon=icon,
+        icon_size=15,
+        icon_color=T.TEXT_MUTED,
+        tooltip=tooltip,
+        width=30,
+        height=30,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=T.radius_all(T.GAP_SM)),
+        ),
+        on_click=lambda e: handler(),
+    )
+
+
+def build_title_bar(*, on_minimize, on_close) -> ft.Control:
     """造顶部标题栏。
 
-    on_close: 点关闭按钮时调用的**无参**函数。
-              app/main.py 传进来的是"先存对话、再关窗"那个流程。
+    两个回调都是**无参**函数，由 app/main.py 提供。
+    ★ 故意做成关键字参数：这两个要是接反了，用户点"最小化"会直接把程序关掉，
+      这种错不该有机会发生。
     """
     # 左边那个小短条是"抓手"：暗示这块区域可以拖。
     # 没有它的话，一条空白很难让人想到能拖窗口。
@@ -44,28 +66,16 @@ def build_title_bar(on_close) -> ft.Control:
         tooltip="按住这里拖动窗口",
     )
 
-    close_btn = ft.IconButton(
-        icon=ft.Icons.CLOSE_ROUNDED,
-        icon_size=15,
-        icon_color=T.TEXT_MUTED,
-        tooltip="关闭",
-        width=30,
-        height=30,
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=T.radius_all(T.GAP_SM)),
-        ),
-        on_click=lambda e: on_close(),
-    )
-
     return ft.WindowDragArea(
         content=ft.Container(
             content=ft.Row(
                 controls=[
                     grip,
                     ft.Container(expand=True),      # 中间全部留白 = 可拖动区
-                    close_btn,
+                    _window_button(ft.Icons.REMOVE_ROUNDED, "最小化", on_minimize),
+                    _window_button(ft.Icons.CLOSE_ROUNDED, "关闭", on_close),
                 ],
-                spacing=T.GAP_SM,
+                spacing=T.GAP_XS,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
             ),
             height=BAR_HEIGHT,

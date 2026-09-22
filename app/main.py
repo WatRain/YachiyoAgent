@@ -171,13 +171,30 @@ def main(page: ft.Page) -> None:
                         type(exc).__name__, exc)
             await page.window.destroy()
 
+    def minimize_window() -> None:
+        """最小化窗口。
+
+        注意 Flet 1.0 上没有 window.minimize() 这个方法，
+        有的是 `minimized` 属性（文档："Set to True to minimize programmatically"）。
+        改属性之后必须 update()，否则不会推到客户端。
+        """
+        page.window.minimized = True
+        page.update()
+
     # 整个窗口只有这一个容器；里面的 body 在"引导"和"主界面"之间切换。
     # 自绘标题栏放在 body 外面 —— 这样切界面时它不会跟着被换掉。
     body = ft.Container(expand=True)
     root = ft.Container(
         expand=True,
         content=ft.Column(
-            controls=[build_title_bar(lambda: page.run_task(close_window)), body],
+            controls=[
+                # 两个回调都用关键字传：接反了的话，点"最小化"会把程序关掉
+                build_title_bar(
+                    on_minimize=minimize_window,
+                    on_close=lambda: page.run_task(close_window),
+                ),
+                body,
+            ],
             spacing=0,
             expand=True,
             # Column 默认 horizontal_alignment=START，子项只占"内容宽度"——

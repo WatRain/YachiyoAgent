@@ -36,11 +36,18 @@ def isolated_data_dir(monkeypatch):
 
 
 class FakeWindow:
-    """够用的假窗口。真实 ft.Window 上 close()/destroy() 都是 async。"""
+    """够用的假窗口。真实 ft.Window 上 close()/destroy() 都是 async。
+
+    属性默认值和真实 Window 保持一致（minimized/maximized 默认 False），
+    否则"断言点了最小化之后 minimized 变 True"就没有意义了。
+    """
 
     def __init__(self) -> None:
         self.width = 0
         self.height = 0
+        self.minimized = False
+        self.maximized = False
+        self.title_bar_hidden = False
         self.closed = False
         self.destroyed = False
 
@@ -245,6 +252,14 @@ def _write_config() -> None:
     save_config(cfg)
 
 
+def _window_button(root, tooltip: str):
+    """按 tooltip 找标题栏上的按钮。"""
+    for button in _find(root, ft.IconButton):
+        if tooltip in str(getattr(button, "tooltip", "")):
+            return button
+    return None
+
+
 @pytest.mark.asyncio
 async def test_main_hides_native_title_bar_and_ships_its_own():
     """★ 原生 Windows 标题栏要关掉，而且必须自带一条能拖、能关的栏。
@@ -263,18 +278,46 @@ async def test_main_hides_native_title_bar_and_ships_its_own():
     assert page.window.title_bar_hidden is True, "没有隐藏 Windows 原生标题栏"
 
     root = page.controls[0]
-    drag_areas = _find(root, ft.WindowDragArea)
-    assert drag_areas, "没有自绘标题栏 —— 窗口将无法拖动"
+    assert _find(root, ft.WindowDragArea), "没有自绘标题栏 —— 窗口将无法拖动"
 
-    close_buttons = [
-        b for b in _find(root, ft.IconButton) if "关闭" in str(getattr(b, "tooltip", ""))
-    ]
-    assert close_buttons, "自绘标题栏上没有关闭按钮 —— 窗口将无法关闭"
+    close_btn = _window_button(root, "关闭")
+    assert close_btn is not None, "自绘标题栏上没有关闭按钮 —— 窗口将无法关闭"
 
     # 点一下：不能报参数错误，而且要真的走到 window.close()
-    close_buttons[0].on_click(None)
+    close_btn.on_click(None)
     await _drain(page)
     assert page.window.closed is True, "点了关闭按钮，窗口却没关"
+
+
+@pytest.mark.asyncio
+async def test_minimize_button_minimizes_the_window():
+    """★ 最小化按钮要真的把 window.minimized 置位并推给客户端。
+
+    Flet 1.0 没有 window.minimize() 这个方法，只有 `minimized` 属性 ——
+    所以这里既要断言属性被置位，也要断言确实 update() 了
+    （不 update 的话属性改了但界面上没反应，等于点了没反应）。
+    """
+    from app import main as main_mod
+
+    _write_config()
+
+    page = FakePage()
+    main_mod.main(page)
+    await _drain(page)
+
+    root = page.controls[0]
+    minimize_btn = _window_button(root, "最小化")
+    assert minimize_btn is not None, "标题栏上没有最小化按钮"
+
+    assert page.window.minimized is False
+    updates_before = page.updates
+
+    minimize_btn.on_click(None)
+    await _drain(page)
+
+    assert page.window.minimized is True, "点了最小化，window.minimized 没置位"
+    assert page.updates > updates_before, "属性改了却没 update()，客户端不会知道"
+    assert page.window.closed is False, "点最小化却把窗口关掉了（按钮接反了）"
 
 
 @pytest.mark.asyncio
@@ -313,9 +356,8 @@ async def test_close_button_saves_conversation_before_closing(monkeypatch):
     await _drain(page)
 
     root = page.controls[0]
-    close_btn = [
-        b for b in _find(root, ft.IconButton) if "关闭" in str(getattr(b, "tooltip", ""))
-    ][0]
+    close_btn = _window_button(root, "关闭")
+    assert close_btn is not None, "标题栏上没有关闭按钮"
 
     close_btn.on_click(None)
     await _drain(page)

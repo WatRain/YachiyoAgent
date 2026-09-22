@@ -350,7 +350,7 @@ def test_title_bar_is_a_drag_area():
     """整条栏必须包在 WindowDragArea 里，否则窗口拖不动。"""
     from app.views.titlebar import build_title_bar
 
-    bar = build_title_bar(lambda: None)
+    bar = build_title_bar(on_minimize=lambda: None, on_close=lambda: None)
     assert isinstance(bar, ft.WindowDragArea)
     # 双击最大化对 440 宽的小挂件窗口没意义
     assert bar.maximizable is False
@@ -370,25 +370,34 @@ def test_title_bar_must_not_expand():
     """
     from app.views.titlebar import BAR_HEIGHT, build_title_bar
 
-    bar = build_title_bar(lambda: None)
+    bar = build_title_bar(on_minimize=lambda: None, on_close=lambda: None)
     assert not getattr(bar, "expand", False), (
         "标题栏用了 expand：它和 body 会被 Column 平分高度，屏幕上就是一大块空白"
     )
     assert bar.height == BAR_HEIGHT, "标题栏高度没定死，会被父级拉伸"
 
 
-def test_title_bar_close_button_is_wired():
-    """关闭按钮要真的把回调打出去（而且不能被拖拽区吃掉）。"""
+def test_title_bar_buttons_are_wired_to_the_right_action():
+    """★ 两个按钮不能接反 —— 接反了点"最小化"就把程序关了。
+
+    所以 build_title_bar 的两个回调是关键字参数，而且这里逐个点名验证。
+    """
     from app.views.titlebar import build_title_bar
 
-    calls = {"n": 0}
-    bar = build_title_bar(lambda: calls.__setitem__("n", calls["n"] + 1))
+    calls: list[str] = []
+    bar = build_title_bar(
+        on_minimize=lambda: calls.append("minimize"),
+        on_close=lambda: calls.append("close"),
+    )
 
     buttons = collect_clickables(bar)
-    assert len(buttons) == 1, f"标题栏应该只有一个按钮，实际 {len(buttons)}"
-    assert "关闭" in str(buttons[0].tooltip)
+    assert len(buttons) == 2, f"标题栏应该有两个按钮，实际 {len(buttons)}"
+
+    by_tooltip = {str(b.tooltip): b for b in buttons}
+    assert set(by_tooltip) == {"最小化", "关闭"}, f"按钮不对：{sorted(by_tooltip)}"
 
     # 传 None 当事件对象：签名对不上就会 TypeError（这个 bug 真发生过）
-    buttons[0].on_click(None)
-    assert calls["n"] == 1
+    by_tooltip["最小化"].on_click(None)
+    by_tooltip["关闭"].on_click(None)
+    assert calls == ["minimize", "close"], f"按钮接反了：{calls}"
 
