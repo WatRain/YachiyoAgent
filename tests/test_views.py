@@ -1,0 +1,234 @@
+"""界面接线的测试：每个按钮点一下，确认不会因为"参数对不上"而崩。
+
+背景：这个 bug 真实发生过 ——
+    on_click=lambda e: page.run_task(on_save)
+而 on_save 的签名是 async def on_save(e)。
+lambda 收到了事件 e，但调 run_task 时【没把它传进去】，
+于是 on_save 被零参数调用 → TypeError: missing 1 required positional argument: 'e'。
+
+这类 bug 的特点是：**界面能建出来、按钮能显示，只有点下去才炸**。
+所以光"能启动"不够，必须真的点一遍。
+
+这个测试不需要 Flet 运行时 —— 用一个假的 Page 顶替。
+"""
+
+import asyncio
+import os
+import shutil
+import uuid
+from pathlib import Path
+
+import flet as ft
+import pytest
+
+_TMP_ROOT = Path(__file__).resolve().parent.parent / ".ptmp" / "views"
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(monkeypatch):
+    root = _TMP_ROOT / uuid.uuid4().hex[:8]
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FLET_APP_STORAGE_DATA", str(root))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+class FakePage:
+    """够用的假 Page：只实现界面真正会调的那几个方法。"""
+
+    def __init__(self) -> None:
+        self.updates = 0
+        self.tasks: list = []
+
+    def update(self) -> None:
+        self.updates += 1
+
+    def run_task(self, fn, *args, **kwargs):
+        """和 Flet 一样：接协程【函数】和它的参数，然后调度执行。"""
+        coro = fn(*args, **kwargs)
+        task = asyncio.ensure_future(coro)
+        self.tasks.append(task)
+        return task
+
+    async def scroll_to(self, **kwargs) -> None:
+        return None
+
+
+class FakeSecrets:
+    def __init__(self) -> None:
+        self.saved: dict[str, str] = {}
+
+    async def exists(self, provider_id: str) -> bool:
+        return provider_id in self.saved
+
+    async def load(self, provider_id: str):
+        return self.saved.get(provider_id)
+
+    async def save(self, provider_id: str, api_key: str, *, persist: bool = True) -> None:
+        self.saved[provider_id] = api_key
+
+    async def delete(self, provider_id: str) -> None:
+        self.saved.pop(provider_id, None)
+
+
+def collect(control, wanted):
+    """把一棵控件树里所有某种类型的控件找出来。"""
+    found = []
+    if isinstance(control, wanted):
+        found.append(control)
+    for attr in ("controls", "content", "tabs"):
+        value = getattr(control, attr, None)
+        if isinstance(value, list):
+            for item in value:
+                found += collect(item, wanted)
+        elif value is not None and not isinstance(value, (str, int, float, bool)):
+            found += collect(value, wanted)
+    return found
+
+
+async def _settle(page: FakePage) -> None:
+    """等已经调度出去的任务跑完。"""
+    if page.tasks:
+        await asyncio.gather(*page.tasks, return_exceptions=True)
+        page.tasks.clear()
+    await asyncio.sleep(0.05)
+
+
+# ─────────────────────────────────────────────
+#  设置页
+# ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_settings_view_builds():
+    from app.views.settings import build_settings_view
+
+    page = FakePage()
+    view = build_settings_view(page, FakeSecrets(), lambda *a, **k: None)
+    assert view is not None
+    assert collect(view, ft.Button), "设置页应该有按钮"
+
+
+@pytest.mark.asyncio
+async def test_every_settings_button_is_clickable():
+    """★ 就是这条能抓住"参数对不上"的 bug。"""
+    from app.views.settings import build_settings_view
+
+    page = FakePage()
+    view = build_settings_view(page, FakeSecrets(), lambda *a, **k: None)
+
+    for button in collect(view, ft.Button):
+        assert button.on_click is not None, f"按钮 {button.content!r} 没绑事件"
+        # 用 None 当事件对象：如果函数签名要求事件却没收到，这里就会 TypeError
+        button.on_click(None)
+        await _settle(page)
+
+
+@pytest.mark.asyncio
+async def test_settings_save_writes_key_and_config():
+    """点「保存」应该真的把密钥存下来，并通知外面。"""
+    from app.views.settings import build_settings_view
+
+    page = FakePage()
+    secrets = FakeSecrets()
+    notified = {"n": 0}
+
+    view = build_settings_view(page, secrets, lambda *a, **k: notified.__setitem__("n", notified["n"] + 1))
+
+    # 填好表单
+    fields = collect(view, ft.TextField)
+    by_label = {f.label: f for f in fields}
+    by_label["显示名"].value = "测试用"
+    by_label["Base URL"].value = "https://api.example.com/v1"
+    by_label["模型 ID"].value = "test-model"
+    by_label["API Key"].value = "sk-test-1234567890"
+
+    # 点保存
+    保存 = [b for b in collect(view, ft.Button) if "保存" in str(b.content)][0]
+    保存.on_click(None)
+    await _settle(page)
+
+    assert secrets.saved, "密钥没有被保存"
+    assert notified["n"] >= 1, "没有通知外面（配置变了）"
+
+
+@pytest.mark.asyncio
+async def test_settings_rejects_bad_base_url():
+    """地址不合法时应该只显示提示，不保存密钥。"""
+    from app.views.settings import build_settings_view
+
+    page = FakePage()
+    secrets = FakeSecrets()
+    view = build_settings_view(page, secrets, lambda *a, **k: None)
+
+    fields = {f.label: f for f in collect(view, ft.TextField)}
+    fields["Base URL"].value = "file:///etc/passwd"      # 明确不允许
+    fields["模型 ID"].value = "m"
+    fields["API Key"].value = "sk-x"
+
+    [b for b in collect(view, ft.Button) if "保存" in str(b.content)][0].on_click(None)
+    await _settle(page)
+
+    assert not secrets.saved, "地址非法时不该保存"
+
+
+# ─────────────────────────────────────────────
+#  聊天页
+# ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_chat_view_builds():
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+    assert view is not None
+    assert len(collect(view, ft.Button)) >= 2      # 至少有发送和停止
+
+
+@pytest.mark.asyncio
+async def test_every_chat_button_is_clickable():
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+
+    for button in collect(view, ft.Button):
+        assert button.on_click is not None
+        button.on_click(None)
+        await _settle(page)
+
+
+@pytest.mark.asyncio
+async def test_chat_without_config_shows_hint():
+    """没配置 provider 时，发消息应该提示去设置页，而不是崩。"""
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)   # get_chat 永远返回 None
+
+    text_field = collect(view, ft.TextField)[0]
+    text_field.value = "你好"
+    text_field.on_submit(None)
+    await _settle(page)
+
+    # 应该出现一条提示
+    texts = [c.value for c in collect(view, ft.Markdown)]
+    assert any("设置" in str(t) for t in texts), f"没有出现提示，实际内容：{texts}"
+
+
+@pytest.mark.asyncio
+async def test_chat_empty_input_does_nothing():
+    """空输入不该触发任何请求。"""
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+
+    text_field = collect(view, ft.TextField)[0]
+    text_field.value = "   "
+    text_field.on_submit(None)
+    await _settle(page)
+
+    assert not collect(view, ft.Markdown), "空输入不该产生气泡"
