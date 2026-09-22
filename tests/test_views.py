@@ -88,6 +88,35 @@ def collect(control, wanted):
     return found
 
 
+def collect_clickables(control):
+    """找出所有"点了会触发回调"的控件。
+
+    ★ 故意不写死控件类型（Button / IconButton / TextButton / ...）。
+      否则界面一改样式（比如把 Button 换成 IconButton），测试就会误报失败 ——
+      那种失败不是 bug，是我们的测试太脆。
+    """
+    found = []
+    if hasattr(control, "on_click") and control.on_click is not None:
+        found.append(control)
+    for attr in ("controls", "content", "tabs"):
+        value = getattr(control, attr, None)
+        if isinstance(value, list):
+            for item in value:
+                found += collect_clickables(item)
+        elif value is not None and not isinstance(value, (str, int, float, bool)):
+            found += collect_clickables(value)
+    return found
+
+
+def label_of(control) -> str:
+    """给控件起个能读的名字，用于断言失败时的提示。"""
+    for attr in ("content", "text", "label", "icon", "hint_text"):
+        value = getattr(control, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    return type(control).__name__
+
+
 async def _settle(page: FakePage) -> None:
     """等已经调度出去的任务跑完。"""
     if page.tasks:
@@ -107,7 +136,7 @@ async def test_settings_view_builds():
     page = FakePage()
     view = build_settings_view(page, FakeSecrets(), lambda *a, **k: None)
     assert view is not None
-    assert collect(view, ft.Button), "设置页应该有按钮"
+    assert collect_clickables(view), "设置页应该有可点的控件"
 
 
 @pytest.mark.asyncio
@@ -118,10 +147,14 @@ async def test_every_settings_button_is_clickable():
     page = FakePage()
     view = build_settings_view(page, FakeSecrets(), lambda *a, **k: None)
 
-    for button in collect(view, ft.Button):
-        assert button.on_click is not None, f"按钮 {button.content!r} 没绑事件"
+    clickables = collect_clickables(view)
+    assert clickables, "设置页应该有可点的控件"
+    for control in clickables:
         # 用 None 当事件对象：如果函数签名要求事件却没收到，这里就会 TypeError
-        button.on_click(None)
+        try:
+            control.on_click(None)
+        except TypeError as exc:
+            pytest.fail(f"点 {label_of(control)!r} 时报参数错误：{exc}")
         await _settle(page)
 
 
@@ -144,8 +177,8 @@ async def test_settings_save_writes_key_and_config():
     by_label["模型 ID"].value = "test-model"
     by_label["API Key"].value = "sk-test-1234567890"
 
-    # 点保存
-    保存 = [b for b in collect(view, ft.Button) if "保存" in str(b.content)][0]
+    # 点保存（按名字找，不写死控件类型）
+    保存 = [c for c in collect_clickables(view) if "保存" in label_of(c)][0]
     保存.on_click(None)
     await _settle(page)
 
@@ -167,7 +200,7 @@ async def test_settings_rejects_bad_base_url():
     fields["模型 ID"].value = "m"
     fields["API Key"].value = "sk-x"
 
-    [b for b in collect(view, ft.Button) if "保存" in str(b.content)][0].on_click(None)
+    [c for c in collect_clickables(view) if "保存" in label_of(c)][0].on_click(None)
     await _settle(page)
 
     assert not secrets.saved, "地址非法时不该保存"
@@ -184,7 +217,9 @@ async def test_chat_view_builds():
     page = FakePage()
     view = build_chat_view(page, lambda: None, lambda: None)
     assert view is not None
-    assert len(collect(view, ft.Button)) >= 2      # 至少有发送和停止
+    # 至少有"发送"和"停止"两个可点控件（不写死控件类型，改样式不会误报）
+    clickables = collect_clickables(view)
+    assert len(clickables) >= 2, f"聊天页可点控件太少：{[label_of(c) for c in clickables]}"
 
 
 @pytest.mark.asyncio
@@ -194,9 +229,13 @@ async def test_every_chat_button_is_clickable():
     page = FakePage()
     view = build_chat_view(page, lambda: None, lambda: None)
 
-    for button in collect(view, ft.Button):
-        assert button.on_click is not None
-        button.on_click(None)
+    clickables = collect_clickables(view)
+    assert clickables
+    for control in clickables:
+        try:
+            control.on_click(None)
+        except TypeError as exc:
+            pytest.fail(f"点 {label_of(control)!r} 时报参数错误：{exc}")
         await _settle(page)
 
 

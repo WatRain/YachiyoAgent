@@ -40,12 +40,25 @@ flet run app\main.py
 
 | 存哪 | 说明 |
 |---|---|
-| **Windows 凭据管理器** | 勾了"保存到系统凭据库"时（默认）。绑定当前 Windows 用户，别人拷走程序目录也拿不到 |
+| **Windows 凭据管理器** | 勾了"保存到系统凭据库"时（默认）。条目名是 `YachiyoAgent/apikey:<provider>`，绑定当前 Windows 用户，别人拷走程序目录也拿不到 |
 | **仅内存** | 不勾选时。退出程序即消失 |
+
+> 实现方式：`core/secrets.py` 用 `ctypes` 直调 `advapi32` 的 `CredReadW/CredWriteW/CredDeleteW`。
+> 不依赖任何第三方库，也不经过 Flet 的 IPC —— 调用发生在当前进程内，实测写 8ms / 读 1ms。
 
 **密钥会发往哪**：只发往你在设置页填的那个地址，**本机直连，不经过任何第三方服务器**。
 
 **日志**：只记录"调用失败""配置损坏"这类元信息，**绝不记录对话内容和密钥**（有专门的脱敏过滤器，见 `core/logging_setup.py`）。
+
+### 早期版本留下的东西
+
+0.1 之前用的是 `flet-secure-storage`。它并没有存进凭据管理器，而是写了一个 DPAPI 加密文件：
+
+```
+%APPDATA%\Appveyor Systems Inc\Flet\flutter_secure_storage.dat
+```
+
+现在的版本不再读它了。换了新 key 之后，这个文件可以直接删掉（里面是旧 key 的密文）。
 
 ## 数据放在哪
 

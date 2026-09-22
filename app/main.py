@@ -5,6 +5,7 @@
   2. 配日志（带密钥脱敏）
   3. 建 Flet 应用
 
+首次启动 → 走引导（OOBE）；已配置过 → 直接进主界面。
 界面只做"画"和"收输入"，对话逻辑全在 core/。
 """
 
@@ -17,22 +18,25 @@ import os
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import logging
+import threading
 
 import flet as ft
 
+from app import theme
 from app.views.chat import build_chat_view
+from app.views.oobe import build_oobe
 from app.views.settings import build_settings_view
 from core import store
 from core.chat import Chat
-from core.config import get_provider, load_config
+from core.config import config_path, get_provider, load_config
 from core.logging_setup import setup_logging
 from core.providers import to_litellm_kwargs, validate_base_url
-from core.secrets import SecretStore
+from core.secrets import SecretStore, backend_label_of
 
 log = logging.getLogger(__name__)
 
 APP_TITLE = "月见八千代"
-WINDOW_WIDTH = 460
+WINDOW_WIDTH = 440
 WINDOW_HEIGHT = 820
 
 
@@ -95,86 +99,211 @@ class AppState:
         ]
 
 
+def warm_up_litellm() -> None:
+    """在后台把 litellm 加载好。
+
+    为什么需要这个：
+      import litellm 实测要 7 秒多，而且是**同步阻塞**的（会冻住事件循环）。
+      如果不预热，用户点"测试连接"时会看到界面卡住 7 秒 —— 感觉像"点了没反应"。
+      在启动时后台跑一遍，这 7 秒就被藏到用户还在看欢迎页的时候了。
+    """
+
+    def _load() -> None:
+        try:
+            import litellm  # noqa: F401
+
+            log.info("litellm 预热完成")
+        except Exception as exc:
+            log.warning("litellm 预热失败: %s", type(exc).__name__)
+
+    threading.Thread(target=_load, daemon=True).start()
+
+
 def main(page: ft.Page) -> None:
     setup_logging()
+    warm_up_litellm()               # ★ 越早越好：把 7 秒的导入藏到启动阶段
 
+    # ── 外观：字体 + 主题（都集中在 app/theme.py 里）──
     page.title = APP_TITLE
+    page.theme = theme.build_theme()
+    page.theme_mode = ft.ThemeMode.DARK
+    theme.load_fonts(page)          # 有打包字体就用打包的，否则用系统 MiSans
+    page.padding = theme.PAGE_PADDING
+    page.bgcolor = theme.BG
     page.window.width = WINDOW_WIDTH
     page.window.height = WINDOW_HEIGHT
-    page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 12
 
     state = AppState()
-    holder: dict = {}          # 放 chat_view，方便在闭包里引用
+    # 启动就把"key 存到哪"写进日志：出问题时不用猜是凭据库还是别的
+    log.info("密钥后端：%s", backend_label_of(state.secrets))
 
-    def get_chat() -> Chat | None:
-        return state.chat
+    # 整个窗口只有这一个容器，里面的内容在"引导"和"主界面"之间切换
+    root = ft.Container(expand=True)
+    page.add(root)
 
-    async def apply_config() -> None:
-        """设置页保存后调用：按新配置重建对话，已有的对话内容搬过去。"""
-        saved_history = state.history()          # 先留住旧内容
-        notice = await state.rebuild_chat(force=True)
-        if state.chat is not None and saved_history:
-            state.chat.messages.extend(saved_history)
+    # ── 主界面（配置好之后才有）──────────────────────
 
-        view = holder.get("view")
-        if view is not None:
-            view.add_notice(notice or "配置已更新，可以开始聊天了。")
+    def show_main(*, notice: str = "") -> None:
+        log.info("show_main: 开始构建主界面")
+        holder: dict = {}
 
-    # ── 建两个界面 ──
-    settings_view = build_settings_view(
-        page, state.secrets, lambda: page.run_task(apply_config)
-    )
-    chat_view = build_chat_view(page, get_chat, lambda: None)
-    holder["view"] = chat_view
+        def get_chat() -> Chat | None:
+            return state.chat
 
-    page.add(
-        # Flet 1.0 的 Tabs 需要用 TabBar（标题栏）+ TabBarView（内容区）组合。
-        # 注意：TabBarView 里的顺序要和 TabBar 里的 tabs 一一对应。
-        ft.Tabs(
+        async def apply_config() -> None:
+            """设置页保存后调用：按新配置重建对话，已有的对话内容搬过去。"""
+            saved_history = state.history()
+            try:
+                message = await state.rebuild_chat(force=True)
+            except Exception as exc:
+                # 后面是 page.run_task，异常不接住就会被静默丢掉
+                log.error("应用配置失败：%s: %s", type(exc).__name__, exc, exc_info=True)
+                view = holder.get("view")
+                if view is not None:
+                    view.add_notice(f"应用配置时出错（{type(exc).__name__}），详情见日志。")
+                return
+
+            if state.chat is not None and saved_history:
+                state.chat.messages.extend(saved_history)
+
+            view = holder.get("view")
+            if view is not None:
+                view.add_notice(message or "配置已更新，可以开始聊天了。")
+
+        log.info("show_main: 构建设置页…")
+        settings_view = build_settings_view(
+            page, state.secrets, lambda: page.run_task(apply_config)
+        )
+        log.info("show_main: 构建设置页完成")
+        chat_view = build_chat_view(page, get_chat, lambda: None)
+        log.info("show_main: 构建聊天页完成")
+        holder["view"] = chat_view
+
+        if notice:
+            chat_view.add_notice(notice)
+
+        log.info("show_main: 组装 Tabs…")
+        root.content = ft.Tabs(
             length=2,
             selected_index=0,
             expand=True,
             content=ft.Column(
                 expand=True,
                 controls=[
-                    ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="对话", icon=ft.Icons.CHAT),
-                            ft.Tab(label="设置", icon=ft.Icons.SETTINGS),
-                        ]
-                    ),
-                    ft.TabBarView(
-                        expand=True,
-                        controls=[
-                            ft.Container(content=chat_view, expand=True),
-                            ft.Container(content=settings_view, expand=True),
-                        ],
-                    ),
+                    ft.TabBar(tabs=[
+                        ft.Tab(label="对话", icon=ft.Icons.CHAT_BUBBLE_ROUNDED),
+                        ft.Tab(label="设置", icon=ft.Icons.SETTINGS_ROUNDED),
+                    ]),
+                    ft.TabBarView(expand=True, controls=[
+                        ft.Container(content=chat_view, expand=True),
+                        ft.Container(content=settings_view, expand=True),
+                    ]),
                 ],
             ),
         )
-    )
+        page.update()
+        log.info("show_main: 已切换并 update() 完成")
 
-    # ── 启动：加载配置 + 恢复上次的对话 ──
-    async def startup() -> None:
-        notice = await state.rebuild_chat()
-        if state.chat is not None:
-            saved = store.load_conversation()
-            if saved:
-                state.chat.messages.extend(saved)
-                chat_view.add_notice(f"已恢复上次的 {len(saved)} 条对话。")
+        # 恢复上次的对话记录
+        async def startup() -> None:
+            if state.chat is None:
                 return
-        if notice:
-            chat_view.add_notice(notice)
+            saved = store.load_conversation()
+            if not saved:
+                return
+            state.chat.messages.extend(saved)
+            # 如果上面已经给了提示（比如"连接成功"），不要盖掉它
+            if not notice:
+                chat_view.add_notice(f"已恢复上次的 {len(saved)} 条对话。")
+
+        page.run_task(startup)
+
+    # ── 引导完成 → 切到主界面 ──────────────────────
+
+    def show_error(exc: BaseException, *, what: str = "进入主界面") -> None:
+        """兜底界面：出错了也要让用户看见原因，而不是停在一个不动的页面上。
+
+        为什么要这个：
+          切换失败以前是直接 raise。异常跑到 Flet 的任务里就没人管了 ——
+          界面上什么都看不到，用户看到的只是"点了没反应"。这个 bug 真的发生过。
+        """
+        log.error("%s失败：%s: %s", what, type(exc).__name__, exc, exc_info=True)
+        detail = f"{type(exc).__name__}: {exc}"
+        root.content = ft.Column(
+            controls=[
+                ft.Container(height=theme.GAP_XL),
+                ft.Icon(ft.Icons.ERROR_OUTLINE_ROUNDED, size=40, color=theme.DANGER),
+                ft.Text(f"{what}出错了", size=18, weight=ft.FontWeight.W_600,
+                        color=theme.TEXT),
+                ft.Text(detail, size=12, color=theme.TEXT_MUTED, selectable=True,
+                        text_align=ft.TextAlign.CENTER),
+                ft.Text("这不是你的操作问题。详细信息在数据目录的 logs/app.log 里。",
+                        size=11, color=theme.TEXT_MUTED,
+                        text_align=ft.TextAlign.CENTER),
+                ft.Container(height=theme.GAP_SM),
+                ft.FilledButton(content="重试", icon=ft.Icons.REFRESH_ROUNDED,
+                                on_click=lambda e: page.run_task(boot)),
+            ],
+            spacing=theme.GAP_MD,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            expand=True,
+        )
+        page.update()
+
+    def on_oobe_done(*, test_connected: bool, persisted: bool = True) -> None:
+        if not persisted:
+            # 存不住也要放人进去，但必须如实说清后果
+            notice = ("配置已保存。但这台机器上系统凭据库不可用，"
+                      "Key 只保留在本次运行中，下次启动要重新填。")
+        elif test_connected:
+            notice = "连接成功，可以开始了。"
         else:
-            chat_view.add_notice("准备好了，说点什么吧。")
+            notice = "配置已保存，开始聊吧。"
+        log.info("引导完成（已测试连接=%s，已持久化=%s）", test_connected, persisted)
 
-    page.run_task(startup)
+        async def go() -> None:
+            log.info("引导完成后的 go() 开始执行")
+            try:
+                message = await state.rebuild_chat(force=True)
+                log.info("引导完成后的 rebuild_chat 返回：%r", message)
+                show_main(notice=message or notice)
+            except Exception as exc:
+                # 这里必须接住 —— 否则界面停在上一步，而用户看不到任何原因
+                show_error(exc, what="切换到主界面")
 
-    # ── 退出：保存对话 ──
+        log.info("准备调度 go() 任务")
+        page.run_task(go)
+
+    # ── 启动分流 ──────────────────────────────────
+
+    async def boot() -> None:
+        # 判断是不是第一次：配置文件还不存在 = 全新的机器/全新的安装
+        first_run = not config_path().exists()
+
+        if first_run:
+            log.info("首次启动，进入引导流程")
+            try:
+                root.content = build_oobe(page, state.secrets, on_oobe_done)
+            except Exception as exc:
+                # 连引导页都建不出来，也必须让用户看到一句话，而不是一片空白
+                show_error(exc, what="打开引导页")
+                return
+            page.update()
+            return
+
+        log.info("已有配置，直接进入主界面")
+        try:
+            message = await state.rebuild_chat()
+            show_main(notice=message)
+        except Exception as exc:
+            show_error(exc, what="启动")
+
+    # ── 退出：保存对话 ─────────────────────────────
+
     def save_conversation() -> None:
         history = state.history()
+        if not history:
+            return
         try:
             store.save_conversation(history)
             log.info("已保存对话记录 %d 条", len(history))
@@ -183,6 +312,8 @@ def main(page: ft.Page) -> None:
 
     page.on_disconnect = lambda e: save_conversation()
     page.on_close = lambda e: save_conversation()
+
+    page.run_task(boot)
 
 
 if __name__ == "__main__":

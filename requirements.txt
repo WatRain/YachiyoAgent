@@ -7,8 +7,10 @@
 # UI（Flet 1.0：flet / flet-cli / flet-desktop 锁步发布）
 flet[all]>=1.0.0,<2
 
-# API Key 落盘 → 操作系统凭据管理器
-flet-secure-storage>=1.0.0,<2
+# 注意：API Key 的持久化**不需要额外依赖**。
+# core/secrets.py 用 ctypes 直调 Windows 凭据管理器（advapi32），
+# 不再用 flet-secure-storage —— 那个插件走 Flet 的 invoke-method IPC，
+# 在真机上会抛 RuntimeError 甚至无限等待，实测把首次引导卡死过。
 
 # 统一的模型调用层（支持任意 OpenAI 兼容端点）
 litellm>=1.100
