@@ -225,6 +225,14 @@ class WindowsCredentialBackend:
             self.delete(target)
 
     def _targets(self) -> list[str]:
+        """列出本应用写进去的全部条目名。
+
+        ⚠️ CredEnumerateW 的 Filter **不是**通配符模式，而是"前缀 + *"：
+           文档原文 "The filter specifies a name prefix followed by an asterisk"。
+           所以 `f"{SERVICE}/*"` 是对的（匹配所有以 `YachiyoAgent/` 开头的条目），
+           而 `"*Yachiyo*"` 会被当成字面前缀，一条都匹配不到 —— 这个坑我踩过，
+           当时以为是"凭据没存进去"，差点把好好的实现改坏。
+        """
         count = wintypes.DWORD(0)
         array = ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))()
         ok = self._api.CredEnumerateW(
