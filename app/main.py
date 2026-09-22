@@ -26,6 +26,7 @@ from app import theme
 from app.views.chat import build_chat_view
 from app.views.oobe import build_oobe
 from app.views.settings import build_settings_view
+from app.views.titlebar import build_title_bar
 from core import store
 from core.chat import Chat
 from core.config import config_path, get_provider, load_config
@@ -132,13 +133,58 @@ def main(page: ft.Page) -> None:
     page.bgcolor = theme.BG
     page.window.width = WINDOW_WIDTH
     page.window.height = WINDOW_HEIGHT
+    # ★ 去掉 Windows 原生那条标题栏 —— 它跟这套深色界面放一起太出戏。
+    #   代价是"拖动窗口"和"关闭窗口"要自己提供：
+    #   顶部那条自绘栏见 app/views/titlebar.py。
+    page.window.title_bar_hidden = True
+    page.window.title_bar_buttons_hidden = True
 
     state = AppState()
     # 启动就把"key 存到哪"写进日志：出问题时不用猜是凭据库还是别的
     log.info("密钥后端：%s", backend_label_of(state.secrets))
 
-    # 整个窗口只有这一个容器，里面的内容在"引导"和"主界面"之间切换
-    root = ft.Container(expand=True)
+    # ── 退出：保存对话 ─────────────────────────────
+
+    def save_conversation() -> None:
+        history = state.history()
+        if not history:
+            return
+        try:
+            store.save_conversation(history)
+            log.info("已保存对话记录 %d 条", len(history))
+        except Exception as exc:
+            log.warning("保存对话失败: %s", type(exc).__name__)
+
+    async def close_window() -> None:
+        """点自绘标题栏上那个关闭按钮时走这里。
+
+        先自己存一遍对话，再走 close()（它会触发 on_close，那边也会存一次）。
+        两道都留着：原生标题栏没了以后，这是我们唯一的关闭入口，
+        不能出现"关了但聊天记录没存上"。
+        """
+        save_conversation()
+        try:
+            await page.window.close()
+        except Exception as exc:
+            # close() 走的是 invoke_method，万一客户端不响应也必须有出路
+            log.warning("window.close() 失败（%s: %s），改用 destroy()",
+                        type(exc).__name__, exc)
+            await page.window.destroy()
+
+    # 整个窗口只有这一个容器；里面的 body 在"引导"和"主界面"之间切换。
+    # 自绘标题栏放在 body 外面 —— 这样切界面时它不会跟着被换掉。
+    body = ft.Container(expand=True)
+    root = ft.Container(
+        expand=True,
+        content=ft.Column(
+            controls=[build_title_bar(lambda: page.run_task(close_window)), body],
+            spacing=0,
+            expand=True,
+            # Column 默认 horizontal_alignment=START，子项只占"内容宽度"——
+            # 标题栏就缩成一小撮、不管它，还不好看。STRETCH 让两者都撑满宽度。
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        ),
+    )
     page.add(root)
 
     # ── 主界面（配置好之后才有）──────────────────────
@@ -183,7 +229,7 @@ def main(page: ft.Page) -> None:
             chat_view.add_notice(notice)
 
         log.info("show_main: 组装 Tabs…")
-        root.content = ft.Tabs(
+        body.content = ft.Tabs(
             length=2,
             selected_index=0,
             expand=True,
@@ -229,7 +275,7 @@ def main(page: ft.Page) -> None:
         """
         log.error("%s失败：%s: %s", what, type(exc).__name__, exc, exc_info=True)
         detail = f"{type(exc).__name__}: {exc}"
-        root.content = ft.Column(
+        body.content = ft.Column(
             controls=[
                 ft.Container(height=theme.GAP_XL),
                 ft.Icon(ft.Icons.ERROR_OUTLINE_ROUNDED, size=40, color=theme.DANGER),
@@ -283,7 +329,7 @@ def main(page: ft.Page) -> None:
         if first_run:
             log.info("首次启动，进入引导流程")
             try:
-                root.content = build_oobe(page, state.secrets, on_oobe_done)
+                body.content = build_oobe(page, state.secrets, on_oobe_done)
             except Exception as exc:
                 # 连引导页都建不出来，也必须让用户看到一句话，而不是一片空白
                 show_error(exc, what="打开引导页")
@@ -299,16 +345,7 @@ def main(page: ft.Page) -> None:
             show_error(exc, what="启动")
 
     # ── 退出：保存对话 ─────────────────────────────
-
-    def save_conversation() -> None:
-        history = state.history()
-        if not history:
-            return
-        try:
-            store.save_conversation(history)
-            log.info("已保存对话记录 %d 条", len(history))
-        except Exception as exc:
-            log.warning("保存对话失败: %s", type(exc).__name__)
+    # （save_conversation 定义在上面，因为自绘标题栏的关闭按钮要用到它；）
 
     page.on_disconnect = lambda e: save_conversation()
     page.on_close = lambda e: save_conversation()

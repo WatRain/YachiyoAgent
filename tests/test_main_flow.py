@@ -35,6 +35,22 @@ def isolated_data_dir(monkeypatch):
         shutil.rmtree(root, ignore_errors=True)
 
 
+class FakeWindow:
+    """够用的假窗口。真实 ft.Window 上 close()/destroy() 都是 async。"""
+
+    def __init__(self) -> None:
+        self.width = 0
+        self.height = 0
+        self.closed = False
+        self.destroyed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def destroy(self) -> None:
+        self.destroyed = True
+
+
 class FakePage:
     """够用的假 Page。"""
 
@@ -42,7 +58,7 @@ class FakePage:
         self.controls: list = []
         self.updates = 0
         self.tasks: list = []
-        self.window = type("W", (), {"width": 0, "height": 0})()
+        self.window = FakeWindow()
 
     def add(self, *controls) -> None:
         self.controls.extend(controls)
@@ -166,6 +182,146 @@ async def test_main_view_serializes_to_something_the_client_can_build():
     assert names.count("TextField") >= 2, "对话页/设置页的输入框没进报文"
     assert "Dropdown" in names, "设置页的 provider 下拉没进报文"
     assert "FilledButton" in names, "设置页的按钮没进报文"
+
+
+# ─────────────────────────────────────────────
+#  自绘标题栏（原生标题栏被隐藏之后，拖动和关闭只能自己提供）
+# ─────────────────────────────────────────────
+
+def _write_config() -> None:
+    from core.config import ProviderConfig, load_config, save_config, upsert_provider
+
+    cfg = load_config()
+    upsert_provider(cfg, ProviderConfig(
+        id="deepseek", display_name="DeepSeek",
+        base_url="https://api.deepseek.com/v1", model_id="deepseek-chat",
+    ))
+    cfg.active_provider = "deepseek"
+    save_config(cfg)
+
+
+@pytest.mark.asyncio
+async def test_main_hides_native_title_bar_and_ships_its_own():
+    """★ 原生 Windows 标题栏要关掉，而且必须自带一条能拖、能关的栏。
+
+    关掉原生标题栏却忘了补自己的，用户就会既不能移动也不能关闭窗口 ——
+    这是"能启动 ≠ 能点"的典型。
+    """
+    from app import main as main_mod
+
+    _write_config()
+
+    page = FakePage()
+    main_mod.main(page)
+    await _drain(page)
+
+    assert page.window.title_bar_hidden is True, "没有隐藏 Windows 原生标题栏"
+
+    root = page.controls[0]
+    drag_areas = _find(root, ft.WindowDragArea)
+    assert drag_areas, "没有自绘标题栏 —— 窗口将无法拖动"
+
+    close_buttons = [
+        b for b in _find(root, ft.IconButton) if "关闭" in str(getattr(b, "tooltip", ""))
+    ]
+    assert close_buttons, "自绘标题栏上没有关闭按钮 —— 窗口将无法关闭"
+
+    # 点一下：不能报参数错误，而且要真的走到 window.close()
+    close_buttons[0].on_click(None)
+    await _drain(page)
+    assert page.window.closed is True, "点了关闭按钮，窗口却没关"
+
+
+@pytest.mark.asyncio
+async def test_close_button_saves_conversation_before_closing(monkeypatch):
+    """关闭前必须把对话存下来。
+
+    原生标题栏没了以后，这个按钮是**唯一**的关闭入口，
+    不能出现"关了但聊天记录丢了"。
+    """
+    from app import main as main_mod
+    from core import store
+
+    class FakeChat:
+        def __init__(self, kwargs) -> None:
+            self.kwargs = kwargs
+            self.messages = [
+                {"role": "system", "content": "人格设定"},
+                {"role": "user", "content": "在吗"},
+                {"role": "assistant", "content": "在的"},
+            ]
+
+    monkeypatch.setattr(main_mod, "Chat", FakeChat)
+
+    fake_store = FakeSecrets({"deepseek": "sk-close-test"})
+
+    class PatchedStore:
+        def __new__(cls, *a, **kw):
+            return fake_store
+
+    monkeypatch.setattr(main_mod, "SecretStore", PatchedStore)
+
+    _write_config()
+
+    page = FakePage()
+    main_mod.main(page)
+    await _drain(page)
+
+    root = page.controls[0]
+    close_btn = [
+        b for b in _find(root, ft.IconButton) if "关闭" in str(getattr(b, "tooltip", ""))
+    ][0]
+
+    close_btn.on_click(None)
+    await _drain(page)
+
+    saved = store.load_conversation()
+    assert [m.get("content") for m in saved] == ["在吗", "在的"], \
+        f"关闭前没把对话存好，实际存了：{saved}"
+    assert page.window.closed is True
+
+
+@pytest.mark.asyncio
+async def test_main_column_stretches_its_children():
+    """★ 回归测试：装标题栏的那个 Column 必须 STRETCH。
+
+    Column 默认 horizontal_alignment=START，子项只占"内容宽度"。
+    不改成 STRETCH 的话，标题栏会缩成一小撮、关闭按钮挤到左边，
+    而不是贴在窗口右上角。
+    """
+    from app import main as main_mod
+    from core.config import config_path
+
+    config_path().unlink(missing_ok=True)
+
+    page = FakePage()
+    main_mod.main(page)
+
+    root = page.controls[0]
+    column = root.content
+    assert isinstance(column, ft.Column)
+    assert column.horizontal_alignment == ft.CrossAxisAlignment.STRETCH, (
+        "外层 Column 没有 STRETCH，标题栏撑不满宽度"
+    )
+    assert column.expand is True
+
+
+@pytest.mark.asyncio
+async def test_title_bar_does_not_cover_the_oobe():
+    """引导页也要能在自绘标题栏下面正常显示。"""
+    from app import main as main_mod
+    from core.config import config_path
+
+    config_path().unlink(missing_ok=True)
+
+    page = FakePage()
+    main_mod.main(page)
+    await _drain(page)
+
+    root = page.controls[0]
+    assert _find(root, ft.WindowDragArea), "引导阶段没有标题栏（那用户拖不动窗口）"
+    texts = " ".join(str(t.value) for t in _find(root, ft.Text) if t.value)
+    assert "API Key" in texts, "标题栏把引导页挤没了"
 
 
 # ─────────────────────────────────────────────

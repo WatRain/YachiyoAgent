@@ -271,3 +271,55 @@ async def test_chat_empty_input_does_nothing():
     await _settle(page)
 
     assert not collect(view, ft.Markdown), "空输入不该产生气泡"
+
+
+# ─────────────────────────────────────────────
+#  自绘标题栏
+# ─────────────────────────────────────────────
+
+def test_title_bar_is_a_drag_area():
+    """整条栏必须包在 WindowDragArea 里，否则窗口拖不动。"""
+    from app.views.titlebar import build_title_bar
+
+    bar = build_title_bar(lambda: None)
+    assert isinstance(bar, ft.WindowDragArea)
+    # 双击最大化对 440 宽的小挂件窗口没意义
+    assert bar.maximizable is False
+
+
+def test_title_bar_must_not_expand():
+    """★ 回归测试：标题栏不能 expand —— 否则会吃掉半屏。
+
+    真实故障记录：
+      app/main.py 里 root 是 Column([标题栏, body])，body 是 expand=True。
+      标题栏一开始也写了 expand=True，于是 Column 把可用高度按比例分给两者，
+      标题栏占了半屏。用户看到的就是"关闭按钮上面一大块空白"。
+
+      和之前 Row(wrap=True) + expand=True 那次是同一类问题：
+      Python 侧结构看着完全正常，只有真的画出来才知道错了。
+      所以这里盯死两件事：不 expand、高度写死。
+    """
+    from app.views.titlebar import BAR_HEIGHT, build_title_bar
+
+    bar = build_title_bar(lambda: None)
+    assert not getattr(bar, "expand", False), (
+        "标题栏用了 expand：它和 body 会被 Column 平分高度，屏幕上就是一大块空白"
+    )
+    assert bar.height == BAR_HEIGHT, "标题栏高度没定死，会被父级拉伸"
+
+
+def test_title_bar_close_button_is_wired():
+    """关闭按钮要真的把回调打出去（而且不能被拖拽区吃掉）。"""
+    from app.views.titlebar import build_title_bar
+
+    calls = {"n": 0}
+    bar = build_title_bar(lambda: calls.__setitem__("n", calls["n"] + 1))
+
+    buttons = collect_clickables(bar)
+    assert len(buttons) == 1, f"标题栏应该只有一个按钮，实际 {len(buttons)}"
+    assert "关闭" in str(buttons[0].tooltip)
+
+    # 传 None 当事件对象：签名对不上就会 TypeError（这个 bug 真发生过）
+    buttons[0].on_click(None)
+    assert calls["n"] == 1
+
