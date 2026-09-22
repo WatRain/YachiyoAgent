@@ -185,6 +185,51 @@ async def test_main_view_serializes_to_something_the_client_can_build():
 
 
 # ─────────────────────────────────────────────
+#  启动时恢复历史对话
+# ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_startup_shows_saved_conversation(monkeypatch):
+    """★ 回归测试：上次的对话要**画在屏幕上**，不能只塞进内存。
+
+    用户报的问题：主界面里对话历史记录没有显示出来。
+    原因：startup() 只做了 state.chat.messages.extend(saved)，
+    没让界面把它画出来 —— 状态栏还写着"已恢复上次的 N 条对话"。
+    """
+    from app import main as main_mod
+    from core import store
+
+    _write_config()
+
+    # 先造一份"上次的对话"
+    store.save_conversation([
+        {"role": "user", "content": "昨天那个问题"},
+        {"role": "assistant", "content": "我想想"},
+    ])
+
+    fake_store = FakeSecrets({"deepseek": "sk-history"})
+
+    class PatchedStore:
+        def __new__(cls, *a, **kw):
+            return fake_store
+
+    monkeypatch.setattr(main_mod, "SecretStore", PatchedStore)
+
+    page = FakePage()
+    main_mod.main(page)
+    await _drain(page)
+
+    root = page.controls[0]
+    on_screen = [m.value for m in _find(root, ft.Markdown)]
+    assert "昨天那个问题" in on_screen, (
+        f"历史里的用户消息没画出来，屏幕上只有：{on_screen}"
+    )
+    assert "我想想" in on_screen, (
+        f"历史里的回复没画出来，屏幕上只有：{on_screen}"
+    )
+
+
+# ─────────────────────────────────────────────
 #  自绘标题栏（原生标题栏被隐藏之后，拖动和关闭只能自己提供）
 # ─────────────────────────────────────────────
 

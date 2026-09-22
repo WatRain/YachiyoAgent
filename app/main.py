@@ -258,9 +258,12 @@ def main(page: ft.Page) -> None:
             if not saved:
                 return
             state.chat.messages.extend(saved)
+            # ★ 要塞进数据层，也要真的画到界面上。
+            #   以前只做了前者：状态栏说"已恢复上次的 N 条对话"，聊天区却是空的。
+            shown = chat_view.render_history(saved)
             # 如果上面已经给了提示（比如"连接成功"），不要盖掉它
-            if not notice:
-                chat_view.add_notice(f"已恢复上次的 {len(saved)} 条对话。")
+            if not notice and shown:
+                chat_view.add_notice(f"已恢复上次的 {shown} 条对话。")
 
         page.run_task(startup)
 

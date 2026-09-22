@@ -281,6 +281,39 @@ def build_chat_view(page: ft.Page, get_chat, on_settings_needed) -> ft.Control:
         status.value = text
         page.update()
 
+    def render_history(messages, *, animate: bool = False) -> int:
+        """把已有的消息补画成气泡，返回画了几条。
+
+        ★ 为什么需要它：
+          app/main.py 的 startup() 以前只把历史塞进 chat.messages，
+          却没画到界面上 —— 状态栏写着"已恢复上次的 8 条对话"，
+          聊天区却是空的。用户看到的就是"对话历史记录没有显示出来"。
+          **"数据里有了"和"屏幕上有了"是两件事** ——
+          这个项目已经栽在这上面两次了（另一次是 Row(wrap=True)+expand）。
+
+        animate=False（默认）不做入场动画：一次补画十几条会一起闪，
+        而且这些消息本来就该"已经在那儿"了。
+        """
+        shown = 0
+        for message in messages or []:
+            role = message.get("role")
+            content = message.get("content")
+            # 只画对话本身：system（人格设定）和 tool（工具调用）不是给用户看的
+            if role not in ("user", "assistant") or not content:
+                continue
+            bubble = _bubble(content, is_user=(role == "user"))
+            if not animate:
+                # _bubble 默认 offset 是(0, 0.06)，那是"入场动画的起点"。
+                # 不归位的话，这些气泡会永远比正常位置低一点点。
+                bubble.offset = ft.Offset(0, 0)
+            messages_col.controls.append(bubble)
+            shown += 1
+
+        if shown:
+            page.update()
+            page.run_task(scroll_down)      # 直接停在最新一条
+        return shown
+
     # ── 组装 ──
     view = ft.Column(
         controls=[
@@ -292,5 +325,6 @@ def build_chat_view(page: ft.Page, get_chat, on_settings_needed) -> ft.Control:
         expand=True,
         spacing=T.GAP_MD,
     )
-    view.add_notice = add_notice      # 挂上去，方便外部调用
+    view.add_notice = add_notice          # 挂上去，方便外部调用
+    view.render_history = render_history  # 同上：启动时恢复历史要用
     return view

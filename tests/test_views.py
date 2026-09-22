@@ -274,6 +274,75 @@ async def test_chat_empty_input_does_nothing():
 
 
 # ─────────────────────────────────────────────
+#  恢复历史对话
+# ─────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_render_history_draws_bubbles():
+    """★ 回归测试：历史消息必须真的画成气泡。
+
+    真实故障记录：
+      app/main.py 的 startup() 只把历史塞进了 chat.messages，
+      没有画到界面上 —— 状态栏写着"已恢复上次的 8 条对话"，
+      聊天区一片空白。用户报的就是"对话历史记录没有显示出来"。
+    """
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+
+    shown = view.render_history([
+        {"role": "system", "content": "人格设定，不该显示"},
+        {"role": "user", "content": "在吗"},
+        {"role": "assistant", "content": "在的"},
+        {"role": "tool", "content": "{}"},
+        {"role": "assistant", "content": ""},          # 空内容不画
+    ])
+    await _settle(page)
+
+    assert shown == 2, f"应该只画 user/assistant 两条，实际 {shown}"
+
+    texts = [m.value for m in collect(view, ft.Markdown)]
+    assert "在吗" in texts, f"用户那条没画出来：{texts}"
+    assert "在的" in texts, f"八千代那条没画出来：{texts}"
+    assert not any("人格设定" in str(t) for t in texts), "system 消息不该显示"
+    assert not any("{}" == str(t) for t in texts), "tool 消息不该显示"
+
+
+@pytest.mark.asyncio
+async def test_render_history_bubbles_are_at_normal_position():
+    """★ 历史气泡不能带着"入场动画起点"的偏移。
+
+    _bubble 默认 offset=(0, 0.06)（那是给新消息滑入用的）。
+    历史气泡如果忘了归位，就会永远比正常位置低一点点。
+    """
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+    view.render_history([{"role": "user", "content": "你好"}])
+    await _settle(page)
+
+    bubbles = collect(view, ft.Container)
+    animated = [b for b in bubbles if getattr(b, "offset", None) == ft.Offset(0, 0.06)]
+    assert not animated, "历史气泡还停在入场动画的起点上"
+
+
+def test_render_history_with_nothing_to_show():
+    """没有可画的内容时不该报错、也不该瞎刷界面。"""
+    from app.views.chat import build_chat_view
+
+    page = FakePage()
+    view = build_chat_view(page, lambda: None, lambda: None)
+    before = page.updates
+
+    assert view.render_history([]) == 0
+    assert view.render_history(None) == 0
+    assert view.render_history([{"role": "system", "content": "x"}]) == 0
+    assert page.updates == before, "没东西可画却刷了界面"
+
+
+# ─────────────────────────────────────────────
 #  自绘标题栏
 # ─────────────────────────────────────────────
 
