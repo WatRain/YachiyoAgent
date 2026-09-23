@@ -37,6 +37,16 @@ pytest-cache-files-*/
 dist/
 build/
 *.spec
+# 例外：打包规格是源码，要跟着仓库走（PyInstaller 自己生成的 spec 才该忽略）
+!packaging/*.spec
 
 # 打包时临时下载的 wheel
 wheels/
+
+# tiktoken 的 BPE 词表（构建时由 packaging/fetch_tiktoken_cache.py 下载，约 5MB，不进仓库）
+packaging/tiktoken_cache/
+
+# Electron 前端
+node_modules/
+desktop/.logs/
+desktop/release/

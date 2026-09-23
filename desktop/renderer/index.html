@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*;" />
+  <title>月见八千代</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="titlebar">
+      <span class="grip" title="按住这里拖动窗口"></span>
+      <div class="fill"></div>
+      <button id="btn-min" class="winbtn" title="最小化">&#x2500;</button>
+      <button id="btn-close" class="winbtn close" title="关闭">&#x2715;</button>
+    </div>
+
+    <div class="body">
+      <section class="chat">
+        <div class="chat-header">
+          <div class="avatar">八</div>
+          <div class="who">
+            <div class="name">月见八千代</div>
+            <div class="sub">月读管理员</div>
+          </div>
+          <button id="btn-settings" class="dock" title="设置">&#x2699;</button>
+          <span id="dot" class="dot"></span>
+        </div>
+
+        <div id="messages" class="messages"></div>
+        <div id="status" class="status"></div>
+
+        <div id="input-shell" class="input-shell">
+          <textarea id="input" rows="1" placeholder="和八千代说点什么…"></textarea>
+          <button id="btn-send" class="sendbtn" title="发送（回车）">&#x2191;</button>
+          <button id="btn-stop" class="stopbtn hidden" title="停止">&#x25A0;</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-inner">
+          <div class="stage"><iframe id="pet" title="八千代"></iframe></div>
+          <div id="panel-status" class="panel-status">正在唤醒八千代…</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="overlay" class="overlay hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

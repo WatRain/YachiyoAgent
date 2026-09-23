@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Yachiyo · P0 探针</title>
+<style>
+  :root {
+    --bg: #111114;
+    --panel: #1a1a1e;
+    --line: #2a2a30;
+    --text: #e8e8ee;
+    --dim: #8b8b96;
+    --accent: #7c9cff;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #bar {
+    height: 34px; display: flex; align-items: center; gap: 8px;
+    padding: 0 4px 0 10px; -webkit-app-region: drag;
+    background: var(--bg); border-bottom: 1px solid var(--line);
+    font-size: 13px; color: var(--dim);
+  }
+  #bar .grip { font-size: 12px; letter-spacing: 2px; }
+  #bar .spacer { flex: 1; }
+  #bar button {
+    -webkit-app-region: no-drag;
+    width: 34px; height: 26px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--dim); font-size: 13px; cursor: pointer;
+  }
+  #bar button:hover { background: #23232a; color: var(--text); }
+  main { height: calc(100% - 34px); display: flex; gap: 12px; padding: 12px; }
+  .card { background: var(--panel); border-radius: 20px; }
+  #chat { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  #stage {
+    width: 412px; padding: 16px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px;
+  }
+  #canvas-holder {
+    width: 380px; height: 680px; border-radius: 12px;
+    background: repeating-linear-gradient(45deg, #17171b 0 12px, #1c1c21 12px 24px);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--dim); font-size: 12px; text-align: center;
+  }
+  #fps { font-size: 11px; color: var(--dim); }
+  .bubble { max-width: 80%; padding: 8px 12px; border-radius: 12px; background: #22222a; }
+  .bubble.me { align-self: flex-end; background: #2b3a6b; }
+  h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+  code { color: var(--accent); }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <span class="grip">⠿</span>
+    <span>月见八千代 · P0 探针</span>
+    <span class="spacer"></span>
+    <button id="min" title="最小化">—</button>
+    <button id="close" title="关闭">✕</button>
+  </div>
+  <main>
+    <section id="chat" class="card">
+      <h3>Electron 起来了</h3>
+      <div class="bubble">如果你能看见这个窗口，说明 Electron 在这台机器上可用。</div>
+      <div class="bubble me">左聊天 / 右角色面板，布局与 Flet 版一致。</div>
+      <div class="bubble" id="ver"></div>
+    </section>
+    <section id="stage" class="card">
+      <div id="canvas-holder">角色画布 380×680<br />（P3 阶段把 Live2D 直接放进这里）</div>
+      <div id="fps">rAF 计数中…</div>
+    </section>
+  </main>
+  <script>
+    const v = window.yachiyo?.versions ?? {};
+    document.getElementById("ver").textContent =
+      `electron ${v.electron} / chrome ${v.chrome} / node ${v.node}`;
+
+    document.getElementById("min").onclick = () => window.yachiyo?.minimize?.();
+    document.getElementById("close").onclick = () => window.yachiyo?.close?.();
+
+    // 测一下渲染进程的 rAF 上限（后面 Live2D 就在这个进程里画）
+    let frames = 0, t0 = performance.now();
+    function tick() {
+      frames++;
+      const now = performance.now();
+      if (now - t0 >= 1000) {
+        const fps = (frames * 1000) / (now - t0);
+        const el = document.getElementById("fps");
+        el.textContent = `rAF ≈ ${fps.toFixed(1)} fps`;
+        console.log(`rAF ≈ ${fps.toFixed(1)} fps`);
+        frames = 0; t0 = now;
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>
