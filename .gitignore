@@ -23,6 +23,11 @@ docs/
 *.db-wal
 *.db-shm
 
+# 模型目录：本地自用，不上传。
+# 注意必须是 /models/（带前导斜杠 = 只匹配仓库根的这个目录），
+# 否则 app/assets/live2d/models/（内置模型，必须跟着仓库走）也会被一起忽略掉。
+/models/
+
 # Python
 __pycache__/
 *.py[cod]

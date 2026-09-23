@@ -114,7 +114,6 @@ npm start
 │  ├─ logging_setup.py    日志 + 密钥脱敏
 │  └─ paths.py            数据目录（打包兼容）
 ├─ packaging/             PyInstaller 规格（把后端打成 exe）
-├─ models/                放你的 Live2D 模型（见 models/README.md，不进 git）
 └─ tests/                 200+ 个测试，不联网、不需要 API Key
 ```
 
@@ -147,5 +146,3 @@ npm start
 
   两条都会先把后端用 PyInstaller 打成 `packaging/dist/yachiyo-backend/`（见 `packaging/backend.spec`），
   再让 electron-builder 把它塞进 `resources/backend/`。
-- **打包版不含模型**：Live2D 模型要自己放到 `%APPDATA%\月见八千代\data\models\<名字>\`
-  （或设 `YACHIYO_MODEL_DIR`）。见 `models/README.md`。

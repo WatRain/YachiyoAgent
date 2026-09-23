@@ -86,11 +86,14 @@ def renderer_dir() -> Path:
 
 
 def model_roots() -> list[Path]:
-    """Live2D 模型的搜索目录，按优先级排列：
+    """Live2D 模型的搜索目录。
 
-    1. `YACHIYO_MODEL_DIR`（用户/开发显式指定）
-    2. `<数据目录>/models` —— 打包后用户往这里放模型（安装目录不可写）
-    3. `<资源根>/models` —— 随程序分发的内置模型，开发期就是项目根的 models/
+    现在只有**内置模型**一档：`app/assets/live2d/models/`，随程序分发，装完打开就有角色。
+    故意**不给用户留自定义模型的口子** —— 数据目录下的 `models/`、项目根的 `models/`
+    都不再参与搜索（"放个文件夹进去就换模型"那种隐式接口不要有）。
+
+    真需要换一只模型时（开发、排查、以后做内置模型替换）用 `YACHIYO_MODEL_DIR`
+    显式指一个目录；它排在内置模型前面。
 
     返回全部候选（不是"第一个存在的"）：调用方要接着往下找。
     """
@@ -98,7 +101,7 @@ def model_roots() -> list[Path]:
     override = os.environ.get("YACHIYO_MODEL_DIR")
     if override:
         roots.append(Path(override))
-    for candidate in (data_dir() / "models", resource_path("models")):
-        if all(str(candidate) != str(r) for r in roots):
-            roots.append(candidate)
+    builtin = assets_dir() / "models"
+    if all(str(builtin) != str(r) for r in roots):
+        roots.append(builtin)
     return roots

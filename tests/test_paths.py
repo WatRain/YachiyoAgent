@@ -57,28 +57,38 @@ def test_packaged_build_without_appdata_falls_back_to_devdata(monkeypatch, workd
     assert core_paths.data_dir() == core_paths.PROJECT_ROOT / ".devdata"
 
 
-def test_model_roots_puts_the_user_overrides_first(monkeypatch, workdir: Path):
-    """寻找顺序：显式指定的 → 数据目录 → 内置。顺序错了用户换不了模型。"""
-    monkeypatch.setenv("YACHIYO_MODEL_DIR", str(workdir / "mine"))
+def test_model_roots_is_only_the_builtin_model(monkeypatch, workdir: Path):
+    """没有显式指定时，候选里只有内置模型 —— 不给用户留放模型的口子。"""
+    monkeypatch.delenv("YACHIYO_MODEL_DIR", raising=False)
+    monkeypatch.delenv("YACHIYO_ASSETS_DIR", raising=False)
     monkeypatch.setenv("YACHIYO_DATA_DIR", str(workdir / "data"))
+    monkeypatch.setattr(core_paths, "resource_path", lambda rel: workdir / "res" / rel)
+
+    assert core_paths.model_roots() == [workdir / "res" / "app" / "assets" / "live2d" / "models"]
+
+
+def test_model_roots_puts_the_override_first(monkeypatch, workdir: Path):
+    monkeypatch.setenv("YACHIYO_MODEL_DIR", str(workdir / "mine"))
+    monkeypatch.delenv("YACHIYO_ASSETS_DIR", raising=False)
     monkeypatch.setattr(core_paths, "resource_path", lambda rel: workdir / "res" / rel)
 
     roots = core_paths.model_roots()
 
     assert roots[0] == workdir / "mine"
-    assert roots[1] == workdir / "data" / "models"
-    assert roots[2] == workdir / "res" / "models"
+    assert roots[1] == workdir / "res" / "app" / "assets" / "live2d" / "models"
 
 
-def test_model_roots_has_no_duplicates_without_an_override(monkeypatch, workdir: Path):
-    monkeypatch.delenv("YACHIYO_MODEL_DIR", raising=False)
-    monkeypatch.setenv("YACHIYO_DATA_DIR", str(workdir / "data"))
-    monkeypatch.setattr(core_paths, "resource_path", lambda rel: workdir / "data" / rel)
-    assert core_paths.model_roots() == [workdir / "data" / "models"]
+def test_model_roots_has_no_duplicates_when_the_override_is_the_builtin(monkeypatch, workdir: Path):
+    monkeypatch.setenv("YACHIYO_ASSETS_DIR", str(workdir / "assets"))
+    monkeypatch.setenv("YACHIYO_MODEL_DIR", str(workdir / "assets" / "models"))
+    assert core_paths.model_roots() == [workdir / "assets" / "models"]
 
 
-def test_find_model_looks_into_the_data_dir(monkeypatch, workdir: Path):
-    """打包后用户把模型丢进 <数据目录>/models —— 这条路径必须真的能找到模型。"""
+def test_a_model_dropped_in_the_data_dir_is_ignored(monkeypatch, workdir: Path):
+    """以前允许用户把模型放进 <数据目录>/models —— 现在故意不看那里。
+
+    这条测试是"不要给用户留自定义模型接口"的守门人：哪天有人把那一档加回来，它会红。
+    """
     data = workdir / "data"
     model = data / "models" / "someone" / "someone.model3.json"
     model.parent.mkdir(parents=True)
@@ -86,20 +96,42 @@ def test_find_model_looks_into_the_data_dir(monkeypatch, workdir: Path):
 
     monkeypatch.setenv("YACHIYO_DATA_DIR", str(data))
     monkeypatch.delenv("YACHIYO_MODEL_DIR", raising=False)
+    monkeypatch.delenv("YACHIYO_ASSETS_DIR", raising=False)
     monkeypatch.setattr(core_paths, "resource_path", lambda rel: workdir / "res" / rel)
 
-    assert live2d_server.find_model() == model.parent
+    assert live2d_server.find_model() is None
 
 
-def test_find_model_skips_roots_without_a_model(monkeypatch, workdir: Path):
-    """第一个目录是空的时不能停在那里，要继续往下找。"""
+def test_the_builtin_model_ships_inside_assets(monkeypatch, workdir: Path):
+    """内置模型随程序走：`app/assets/live2d/models/`，所以打包后开箱就有角色。
+
+    这条测试在真实仓库上跑（不打桩路径）：用户的数据目录是空的，也不设
+    `YACHIYO_MODEL_DIR`，此时 `find_model()` 必须落到内置模型上。
+    """
+    monkeypatch.delenv("YACHIYO_MODEL_DIR", raising=False)
+    monkeypatch.delenv("YACHIYO_ASSETS_DIR", raising=False)
+    monkeypatch.delenv("FLET_APP_STORAGE_DATA", raising=False)
+    monkeypatch.setenv("YACHIYO_DATA_DIR", str(workdir))
+
+    builtin = core_paths.assets_dir() / "models"
+    found = live2d_server.find_model()
+
+    assert builtin.is_dir(), "内置模型应该放在 app/assets/live2d/models/ 下"
+    assert found is not None, "有内置模型却找不到，说明 model_roots() 漏了 assets 那一档"
+    assert builtin in found.parents, f"找到的是 {found}，不在内置模型目录里"
+    assert list(found.glob("*.model3.json")), "内置模型目录里必须有 *.model3.json"
+
+
+def test_find_model_skips_an_empty_override_root(monkeypatch, workdir: Path):
+    """第一个目录是空的时不能停在那里，要继续往下找到内置模型。"""
     (workdir / "empty").mkdir()
-    bundled = workdir / "res" / "models" / "builtin"
-    bundled.mkdir(parents=True)
-    (bundled / "builtin.model3.json").write_text("{}", encoding="utf-8")
+    builtin = workdir / "res" / "app" / "assets" / "live2d" / "models" / "builtin"
+    builtin.mkdir(parents=True)
+    (builtin / "builtin.model3.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setenv("YACHIYO_MODEL_DIR", str(workdir / "empty"))
-    monkeypatch.setenv("YACHIYO_DATA_DIR", str(workdir / "data"))
+    monkeypatch.delenv("YACHIYO_ASSETS_DIR", raising=False)
     monkeypatch.setattr(core_paths, "resource_path", lambda rel: workdir / "res" / rel)
 
-    assert live2d_server.find_model() == bundled
+    assert live2d_server.find_model() == builtin
+
