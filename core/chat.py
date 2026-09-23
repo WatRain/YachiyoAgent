@@ -171,7 +171,10 @@ class Chat:
             save_to_history()
         except Exception as exc:
             # 出错也保留已收到的部分 —— 用户不该丢掉已经看到的字
-            log.warning("Chat 失败: %s", type(exc).__name__)
+            # 记下异常类型 + 消息（只记类型的话，打包后出了问题只能看到
+            # "Chat 失败: ValueError"，等于没线索）；traceback 放 DEBUG。
+            log.warning("Chat 失败: %s: %s", type(exc).__name__, exc)
+            log.debug("Chat 失败的详细调用栈", exc_info=True)
             message = humanize_error(exc)
             collected += message
             save_to_history()

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from core.paths import logs_dir
@@ -81,7 +82,14 @@ class RedactingFilter(logging.Filter):
 
 
 def setup_logging(level: int = logging.INFO) -> None:
-    """配置根日志。程序启动时调一次。"""
+    """配置根日志。程序启动时调一次。
+
+    日志级别可以用环境变量 YACHIYO_LOG_LEVEL 覆盖（比如排查问题时设成 DEBUG），
+    这样不用改代码就能拿到细节。
+    """
+    override = os.environ.get("YACHIYO_LOG_LEVEL", "").strip().upper()
+    if override:
+        level = getattr(logging, override, level)
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
