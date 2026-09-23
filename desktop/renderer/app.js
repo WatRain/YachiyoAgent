@@ -8,6 +8,11 @@
  *   · 界面拿到的唯一特权来自 preload 暴露的 yachiyoShell（拿地址/token + 两个窗口按钮）
  */
 
+// 最早的一笔：先按系统偏好把 <html data-theme> 定下来，别让浅色用户启动时闪一下深色。
+// 到底用哪套（含"跟随系统"三态）要等从后端读到 config.theme，见 applyTheme()。
+document.documentElement.dataset.theme =
+  window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+
 // ───────────────────────── 运行时状态 ─────────────────────────
 
 const state = {
@@ -22,6 +27,7 @@ const state = {
   secrets: null,
   busy: false,
   toolTask: null,
+  themeMode: "dark",        // system / light / dark，与后端 config.theme 同步
 };
 
 const STAGE_WIDTH = 380;
@@ -41,6 +47,55 @@ const ui = {
   pet: $("pet"),
   overlay: $("overlay"),
 };
+
+// ───────────────────────── 外观（深色 / 浅色） ─────────────────────────
+
+/* 三态：system 跟随系统、light、dark。值存在后端 config.theme（/api/config 白名单里有
+ * theme），所以换主题是持久的；界面只负责把 <html data-theme> 和开关状态对齐。
+ * 所有颜色都写在 style.css 的令牌里，这里不碰具体色值。 */
+const THEME_MODES = ["system", "light", "dark"];
+
+function systemPrefersDark() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/** "跟随系统"要落到具体的一套配色上，其余原样返回。 */
+function resolveTheme(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  return systemPrefersDark() ? "dark" : "light";
+}
+
+function applyTheme(mode, { persist = false } = {}) {
+  const want = THEME_MODES.includes(mode) ? mode : "dark";
+  const resolved = resolveTheme(want);
+  state.themeMode = want;
+  document.documentElement.dataset.theme = resolved;
+  // 角色页也要跟着换：它靠 color-scheme 决定 iframe 底色是透明（深色）还是近白（浅色）
+  try { petWindow()?.yachiyo?.setTheme?.(resolved); } catch { /* 页面还没就绪就算了 */ }
+
+  // 标题栏的快捷开关 + 设置里的三选一，都是 data-theme-set，一起对齐
+  for (const btn of document.querySelectorAll("[data-theme-set]")) {
+    btn.setAttribute("aria-checked", String(btn.dataset.themeSet === resolved));
+  }
+  const desc = document.getElementById("theme-desc");
+  if (desc) {
+    desc.textContent = want === "system"
+      ? `跟随系统，现在是${resolved === "dark" ? "深色" : "浅色"}`
+      : `固定${want === "dark" ? "深色" : "浅色"}`;
+  }
+
+  if (persist) {
+    api("/api/config", { method: "POST", body: { theme: want } }).catch((err) => {
+      setStatus(`外观没能存下来：${err.message}`, true);
+    });
+  }
+  logToShell(`外观：${want === "system" ? "跟随系统" : want === "dark" ? "深色" : "浅色"}（实际 ${resolved}）`);
+}
+
+// 系统跟着切换时，"跟随系统"要立刻跟上（用户没选固定主题的情况）
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (state.themeMode === "system") applyTheme("system");
+});
 
 // ───────────────────────── 小工具 ─────────────────────────
 
@@ -185,7 +240,7 @@ function setBusy(busy) {
   ui.send.classList.toggle("hidden", busy);
   ui.stop.classList.toggle("hidden", !busy);
   ui.dot.classList.toggle("busy", busy);
-  ui.shell.style.borderColor = busy ? "var(--accent)" : "var(--outline)";
+  ui.shell.style.borderColor = busy ? "var(--accent)" : "var(--glass-border)";
 }
 
 // ───────────────────────── 对话（WebSocket） ─────────────────────────
@@ -388,8 +443,11 @@ function bootPanel() {
     return;
   }
   const physics = state.cfg && state.cfg.live2d_physics === false ? "0" : "1";
+  // 主题也要传：角色页靠 color-scheme 决定 iframe 的底色是透明还是近白（见 pet.html 里的注释），
+  // 不传的话深色主题下面板里就是一块白。
+  const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const url = state.apiBase.replace(/\/$/, "") + state.live2d.page
-    + `?model=${encodeURIComponent(state.live2d.model)}&physics=${physics}`;
+    + `?model=${encodeURIComponent(state.live2d.model)}&physics=${physics}&theme=${theme}`;
   ui.pet.src = url;
   watchGaze();
   pollPanel();
@@ -432,7 +490,8 @@ async function pollPanel() {
       lastFrameSample = { t: now, frames: info.frames };
     }
     const phys = info.physics === false ? "物理关" : "物理开";
-    ui.panelStatus.textContent = fps ? `模型就绪 · ${fps} fps · ${phys}` : `模型就绪 · ${phys}`;
+    // 状态行只说"能不能用"，帧率在这里是噪音（真要查帧率看下面每 15 秒那行日志）
+    ui.panelStatus.textContent = `模型就绪 · ${phys}`;
     if (panelSelfCheck !== "ready") {
       panelSelfCheck = "ready";
       logToShell("Live2D 面板就绪：" + JSON.stringify({
@@ -653,7 +712,14 @@ async function reloadCore() {
 
 function openSettings() {
   showSheet(async (sheet) => {
-    const data = await reloadCore();
+    // 后端要是暂时连不上，设置页也必须画出来：否则用户点"设置"只看到一片空白，
+    // 连"外观"这种纯前端的开关都摸不到，也没法判断到底哪儿坏了。
+    let data = null;
+    try {
+      data = await reloadCore();
+    } catch (err) {
+      setStatus(`设置没能读到后端数据：${err.message}`, true);
+    }
     const active = state.providers.find((p) => p.id === state.activeProvider);
 
     sheet.innerHTML = `<h2>设置</h2>`;
@@ -664,22 +730,49 @@ function openSettings() {
       : "";
     sheet.appendChild(intro);
 
+    // 外观：跟随系统 / 浅色 / 深色，选完立刻写回 config.theme
+    const look = document.createElement("div");
+    look.className = "sect";
+    look.innerHTML = `
+      <div class="sect-title">外观</div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">主题</div>
+          <div class="desc" id="theme-desc"></div>
+        </div>
+        <div class="seg" role="radiogroup" aria-label="主题">
+          <button class="seg-btn" data-theme-set="system" role="radio" aria-checked="false">跟随系统</button>
+          <button class="seg-btn" data-theme-set="light" role="radio" aria-checked="false">浅色</button>
+          <button class="seg-btn" data-theme-set="dark" role="radio" aria-checked="false">深色</button>
+        </div>
+      </div>`;
+    for (const btn of look.querySelectorAll("[data-theme-set]")) {
+      btn.onclick = () => applyTheme(btn.dataset.themeSet, { persist: true });
+    }
+    sheet.appendChild(look);
+    applyTheme(state.themeMode || state.cfg?.theme || "dark");   // 把当前选中态刷到刚建好的开关上
+
     // 角色：显示的是模型目录名。模型是美术作品，版权与代码无关 ——
     // 用官方样例模型分发时，版权声明就该出现在用户看得到的地方。
     const modelName = (state.live2d && state.live2d.name) || "";
     const who = document.createElement("div");
-    who.className = "field";
-    who.innerHTML = `<label>角色</label><div class="hint">${
-      modelName
-        ? `${escapeHtml(modelName)}（Live2D 模型，版权归模型作者）`
-        : "没有找到模型 —— 往 models/ 里放一个"
-    }</div>`;
+    who.className = "sect";
+    who.innerHTML = `
+      <div class="sect-title">角色</div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">${modelName ? escapeHtml(modelName) : "还没有模型"}</div>
+          <div class="desc">${modelName
+            ? "Live2D 模型，版权归模型作者"
+            : "没有找到模型 —— 往 models/ 里放一个"}</div>
+        </div>
+      </div>`;
     sheet.appendChild(who);
 
     // 当前用哪个 provider
     const list = document.createElement("div");
-    list.className = "field";
-    list.innerHTML = `<label>正在使用的模型服务</label><div class="chips"></div>`;
+    list.className = "sect";
+    list.innerHTML = `<div class="sect-title">模型服务</div><div class="chips"></div>`;
     const chips = list.querySelector(".chips");
     for (const item of state.providers) {
       const chip = document.createElement("div");
@@ -699,10 +792,9 @@ function openSettings() {
     // 物理开关（帧率的取舍：开≈36fps，关≈60fps）
     const physics = state.cfg?.live2d_physics !== false;
     const row = document.createElement("div");
-    row.className = "switch-row";
+    row.className = "pref";
     row.innerHTML = `
-      <div><div class="label">角色物理（头发、衣摆）</div>
-      <div class="desc">关掉能到 60fps，开着约 36fps —— 物理约占一半的帧时间</div></div>
+      <div class="pref-main"><div class="label">角色物理（头发、衣摆）</div></div>
       <button class="switch ${physics ? "on" : ""}" data-act="physics" role="switch"
               aria-checked="${physics}" aria-label="角色物理"></button>`;
     const sw = row.querySelector(".switch");
@@ -715,14 +807,15 @@ function openSettings() {
       try { petWindow()?.yachiyo?.setPhysics(next); } catch { /* 页面没就绪就算了 */ }
       setStatus(`物理已${next ? "打开" : "关闭"}`);
     };
-    sheet.appendChild(row);
+    who.appendChild(row);          // 物理开关跟"角色"是一件事，放同一栏里
 
     // 温度
     const temp = document.createElement("div");
-    temp.className = "field";
-    temp.innerHTML = `<label>温度（越高越活泼，0.8 比较自然）</label>
+    temp.className = "sect";
+    temp.innerHTML = `<div class="sect-title">对话</div>
+      <div class="field"><label>温度（越高越活泼，0.8 比较自然）</label>
       <input type="range" min="0" max="1.5" step="0.1" value="${state.cfg?.temperature ?? 0.8}" />
-      <div class="hint" id="temp-value">${state.cfg?.temperature ?? 0.8}</div>`;
+      <div class="hint" id="temp-value">${state.cfg?.temperature ?? 0.8}</div></div>`;
     const range = temp.querySelector("input");
     range.oninput = () => { temp.querySelector("#temp-value").textContent = range.value; };
     range.onchange = async () => {
@@ -733,7 +826,7 @@ function openSettings() {
 
     // 换密钥 / 改配置
     const editTitle = document.createElement("div");
-    editTitle.className = "hint";
+    editTitle.className = "sect-title";
     editTitle.textContent = active ? `修改「${active.display_name}」` : "还没有可用的服务，先在下面配一个";
     sheet.appendChild(editTitle);
     providerForm(sheet, {
@@ -768,7 +861,7 @@ function openSetup() {
   showSheet(async (sheet) => {
     await reloadCore();
     sheet.innerHTML = `
-      <h2>欢迎，先把八千代叫醒</h2>
+      <div class="sheet-head"><div class="mark">月</div><h2>欢迎，先把八千代叫醒</h2></div>
       <div class="hint">
         填一个你自己的模型服务（任何 OpenAI 兼容的都行）。<br />
         API Key 直接存进 ${state.secrets?.backend || "系统凭据管理器"}，程序里不留明文，也不经过我们。
@@ -804,6 +897,7 @@ async function boot() {
   state.token = info.token;
 
   const data = await reloadCore();
+  applyTheme(state.cfg?.theme || "dark");     // 用户上次选的外观：system / light / dark
   renderHistory(data.conversation);
   bootPanel();
   connectWs();
@@ -820,6 +914,10 @@ async function boot() {
 }
 
 // 事件绑定
+// 标题栏上的外观快捷开关（完整三选一在设置里）
+for (const btn of document.querySelectorAll("#theme-quick [data-theme-set]")) {
+  btn.onclick = () => applyTheme(btn.dataset.themeSet, { persist: true });
+}
 $("btn-min").onclick = () => window.yachiyoShell.minimize();
 $("btn-close").onclick = () => window.yachiyoShell.close();
 $("btn-settings").onclick = openSettings;

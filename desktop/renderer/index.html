@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
@@ -8,24 +8,45 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <!-- 背景层：夜空 + 极光 + 月盘 + 星点 + 颗粒。玻璃卡片都浮在这一层上面。 -->
+  <div class="backdrop" aria-hidden="true">
+    <div class="sky"></div>
+    <div class="aurora aurora-a"></div>
+    <div class="aurora aurora-b"></div>
+    <div class="moon"></div>
+    <div class="stars"></div>
+    <div class="grain"></div>
+  </div>
+
   <div id="app">
-    <div class="titlebar">
-      <span class="grip" title="按住这里拖动窗口"></span>
+    <header class="titlebar">
+      <div class="brand">
+        <span class="mark">月</span>
+        <span class="brand-text">月见八千代</span>
+        <span class="brand-sub">Yachiyo</span>
+      </div>
       <div class="fill"></div>
+
+      <!-- 外观快捷开关：深色 / 浅色（完整三选一在设置里） -->
+      <div class="seg seg-theme" id="theme-quick" role="radiogroup" aria-label="外观">
+        <button class="seg-btn" data-theme-set="dark" role="radio" aria-checked="true" title="深色">&#x263E;</button>
+        <button class="seg-btn" data-theme-set="light" role="radio" aria-checked="false" title="浅色">&#x2600;</button>
+      </div>
+
       <button id="btn-min" class="winbtn" title="最小化">&#x2500;</button>
       <button id="btn-close" class="winbtn close" title="关闭">&#x2715;</button>
-    </div>
+    </header>
 
     <div class="body">
-      <section class="chat">
+      <section class="chat glass">
         <div class="chat-header">
           <div class="avatar">八</div>
           <div class="who">
             <div class="name">月见八千代</div>
             <div class="sub">月读管理员</div>
           </div>
-          <button id="btn-settings" class="dock" title="设置">&#x2699;</button>
           <span id="dot" class="dot"></span>
+          <button id="btn-settings" class="dock" data-act="settings" title="设置" aria-label="设置">&#x2699;</button>
         </div>
 
         <div id="messages" class="messages"></div>
@@ -38,7 +59,7 @@
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel glass">
         <div class="panel-inner">
           <div class="stage"><iframe id="pet" title="八千代"></iframe></div>
           <div id="panel-status" class="panel-status">正在唤醒八千代…</div>
