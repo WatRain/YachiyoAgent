@@ -1,0 +1,22 @@
+{
+  "pixi.min.mjs": {
+    "url": "https://cdn.jsdelivr.net/npm/pixi.js@8.13.1/dist/pixi.min.mjs",
+    "bytes": 703842,
+    "sha256": "9ddaaa814931b317056dc36d6d1868b0c7657ed4ffcf8438e581b6d1471269ff"
+  },
+  "pixi-live2d-engine.cubism.es.js": {
+    "url": "https://cdn.jsdelivr.net/npm/untitled-pixi-live2d-engine@1.4.0/dist/cubism.es.js",
+    "bytes": 548402,
+    "sha256": "4afe8c561d06b6f5c3bd5b4eeb67362cf54e3c12b5e84433e16429dde3159091"
+  },
+  "LICENSE-pixi.txt": {
+    "url": "https://cdn.jsdelivr.net/npm/pixi.js@8.13.1/LICENSE",
+    "bytes": 1092,
+    "sha256": "5ce7447bc57f7349ffc48338782fbcabe613696e00712b20d66bc58e780f9473"
+  },
+  "LICENSE-untitled-pixi-live2d-engine.txt": {
+    "url": "https://cdn.jsdelivr.net/npm/untitled-pixi-live2d-engine@1.4.0/LICENSE",
+    "bytes": 1070,
+    "sha256": "159c77232f8fe25574e83ea55db995e49d090ddf6a744df7390740f6b5a8c5e9"
+  }
+}

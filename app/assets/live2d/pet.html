@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>八千代 · Live2D</title>
+<style>
+  /* 背景必须透明：这一页的画面会被逐帧抓下来贴到 Flet 的深色界面上。
+     只要这里出现任何不透明底色，抓出来的就是一块方块。 */
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: transparent;
+  }
+  canvas { display: block; background: transparent; }
+</style>
+</head>
+<body>
+<!-- 依赖全部走本地 + 一个 import map。
+     引擎的 ESM 版本里有 `from "pixi.js"` 这种裸模块名，浏览器自己解析不了，
+     import map 就是干这个的。 -->
+<script type="importmap">
+{
+  "imports": {
+    "pixi.js": "/static/vendor/pixi.min.mjs"
+  }
+}
+</script>
+
+<script>
+/* ── 第一段：先把对外接口挂上，什么依赖都不等 ──
+ *
+ * ★ 为什么必须先挂接口：
+ *   之前把依赖写成普通 <script src>（其中 Cubism Core 来自 CDN）时，
+ *   浏览器解析 HTML 会停下来等，网络一慢后面那段建模型的脚本就永远不执行，
+ *   而 Python 那边只看到"window.yachiyo 是 undefined"，完全不知道卡在哪。
+ *   现在接口先就位，卡在哪一步都能从 state() 里读出来。
+ */
+(() => {
+  "use strict";
+
+  const diag = [];
+  const state = {
+    ready: false,
+    error: "",
+    stage: "boot",        // 当前进行到哪一步，排查用
+    frames: 0,
+    scale: 1,
+    canvas: [0, 0],
+    model: [0, 0],
+    mouth: 0,
+    mouthPath: "",        // 口型参数写在哪个对象上（不同版本路径不一样）
+    deps: {},
+  };
+
+  window.__yachiyo = {
+    say(msg) {
+      diag.push(String(msg));
+      if (diag.length > 80) diag.shift();
+      console.log("[yachiyo] " + msg);
+    },
+    state,
+    snapshot() {
+      return Object.assign({}, state, { diag: diag.slice(-25) });
+    },
+    fail(message) {
+      state.error = String(message);
+      window.__yachiyo.say("失败：" + state.error);
+    },
+  };
+
+  const notReady = () => {
+    throw new Error("模型还没就绪（stage=" + state.stage
+                    + (state.error ? "，error=" + state.error : "") + "）");
+  };
+
+  window.yachiyo = {
+    get ready() { return state.ready; },
+    get error() { return state.error; },
+    state() { return window.__yachiyo.snapshot(); },
+    setMouth() { return notReady(); },
+    setExpression() { return notReady(); },
+    playMotion() { return notReady(); },
+    setScale() { return notReady(); },
+    listMotions() { return notReady(); },
+    listExpressions() { return notReady(); },
+  };
+
+  window.__yachiyo.say("接口就位");
+})();
+</script>
+
+<script type="module">
+/* ── 第二段：加载依赖 → 建 PIXI → 载模型 ──
+ *
+ * 用 ESM + import map，而不是 UMD 全局：
+ *   PIXI 8 的 dist/pixi.min.js 实测**不是** UMD（结尾是 `h}({});`，
+ *   globalThis.PIXI 出现 0 次），靠全局名会踩空。
+ *   ESM 里谁依赖谁写得明明白白。
+ *
+ * Cubism Core 仍是**普通脚本**、来自 Live2D 官方 CDN，并且必须**先于**引擎加载：
+ *   引擎在模块求值时就会检查 Cubism 运行时在不在，不在会抛
+ *   "Could not find Cubism 4 runtime..."（这个坑实测踩过）。
+ *   所以引擎是用动态 import() 拉的，顺序完全由我们控制。
+ */
+const Y = window.__yachiyo;
+const state = Y.state;
+const say = (m) => Y.say(m);
+
+const PIXI_URL = "/static/vendor/pixi.min.mjs";
+const ENGINE_URL = "/static/vendor/pixi-live2d-engine.cubism.es.js";
+/* Cubism Core 从 Live2D 官方 CDN 取：不由我们分发，也是官方示例的做法。
+   首次加载后浏览器会缓存。 */
+const CORE_URL = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
+
+const MOUTH_PARAM = "ParamMouthOpenY";
+const WORK_MEMORY_MB = 32;      // 模型 796 个参数，默认 16MB 容易不够
+
+let app = null;
+let model = null;
+let coreModel = null;
+let baseScale = 1;
+
+/** 动态插普通脚本，带超时 —— 卡住时要能失败，而不是无限等 */
+function loadScript(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; reject(new Error("加载超时(" + timeoutMs + "ms)：" + url)); }
+    }, timeoutMs);
+    el.src = url;
+    el.onload = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(url); } };
+    el.onerror = () => { if (!settled) { settled = true; clearTimeout(timer); reject(new Error("加载失败：" + url)); } };
+    document.head.appendChild(el);
+  });
+}
+
+/** 不同版本的引擎，coreModel 挂的位置不一样，这里都试一遍并记下用哪条路 */
+function findCoreModel(m) {
+  const im = m.internalModel;
+  const tries = [
+    ["internalModel.coreModel", im && im.coreModel],
+    ["internalModel.motionManager.coreModel", im && im.motionManager && im.motionManager.coreModel],
+    ["internalModel._coreModel", im && im._coreModel],
+  ];
+  for (const [path, value] of tries) {
+    if (value && typeof value.setParameterValueById === "function") {
+      state.mouthPath = path;
+      return value;
+    }
+  }
+  return null;
+}
+
+function fit() {
+  if (!app || !model) return;
+  const w = app.screen.width;
+  const h = app.screen.height;
+  state.canvas = [Math.round(w), Math.round(h)];
+  state.model = [Math.round(model.width), Math.round(model.height)];
+
+  /* ★ 用**真实绘制范围**（getLocalBounds）来适配，而不是 model.width/height。
+   *
+   * 原因（实测数据）：
+   *   模型的绘制范围在局部坐标里是 (213, 722) → (3680, 7871)：
+   *   尺寸和 model.width/height 一样（3467×7149），但**原点偏了 722**。
+   *   按 width/height + anchor(0.5,1) 摆放，内容会整体高出画面约 74px ——
+   *   表现就是"角色的头被切掉、下面反而空一条"。
+   */
+  model.anchor.set(0, 0);
+  model.scale.set(1);
+  const b = model.getLocalBounds();
+  const hasBounds = b && b.width > 1 && b.height > 1;
+  const boxW = hasBounds ? b.width : model.width;
+  const boxH = hasBounds ? b.height : model.height;
+  const boxX = hasBounds ? b.x : 0;
+  const boxY = hasBounds ? b.y : 0;
+
+  baseScale = Math.min(w / boxW, h / boxH);
+  const s = baseScale * state.scale;
+  model.scale.set(s);
+  // 让内容框的"底边中点"落在画面底部中央
+  model.position.set(w / 2 - (boxX + boxW / 2) * s, h - (boxY + boxH) * s);
+}
+
+/** 给贴图源补上引擎要读的 `_gpuData` 字段（原因见调用处的注释）。返回补了几个。 */
+function patchTextureGpuData(m) {
+  let patched = 0;
+  for (const texture of (m.textures || [])) {
+    const source = texture && texture.source;
+    if (source && !source._gpuData) {
+      source._gpuData = Object.create(null);
+      patched += 1;
+    }
+  }
+  return patched;
+}
+
+async function start() {
+  const params = new URLSearchParams(location.search);
+  const modelUrl = params.get("model");
+  if (!modelUrl) {
+    return Y.fail("缺少 ?model= 参数");
+  }
+
+  state.stage = "loading-core";
+  say("加载 Cubism Core（官方 CDN，需要联网）…");
+  await loadScript(CORE_URL, 25000);
+  if (typeof Live2DCubismCore === "undefined") {
+    return Y.fail("Cubism Core 没加载成功（需要联网从官方 CDN 取）");
+  }
+  say("Cubism Core " + Live2DCubismCore.Version.csmGetVersion());
+
+  state.stage = "loading-pixi";
+  const PIXI = await import(PIXI_URL);
+  state.deps.pixi = PIXI.VERSION;
+
+  state.stage = "loading-engine";
+  const engine = await import(ENGINE_URL);
+  state.deps.engine = !!(engine && engine.Live2DModel && engine.Live2DPlugin);
+  if (!state.deps.engine) {
+    return Y.fail("Live2D 引擎没加载成功");
+  }
+  say("PIXI " + state.deps.pixi + "，引擎就绪");
+
+  if (typeof engine.configureCubismSDK === "function") {
+    engine.configureCubismSDK({ memorySizeMB: WORK_MEMORY_MB });
+  }
+
+  state.stage = "creating-app";
+  PIXI.extensions.add(engine.Live2DPlugin);      // 必须先注册渲染管线
+  app = new PIXI.Application();
+  await app.init({
+    resizeTo: window,
+    preference: "webgl",
+    backgroundAlpha: 0,                          // ★ 透明
+    antialias: params.get("aa") !== "0",
+    powerPreference: params.get("hp") === "0" ? "default" : "high-performance",
+    autoDensity: true,
+    resolution: window.devicePixelRatio || 1,
+  });
+  document.body.appendChild(app.canvas);
+  say("PIXI Application 建好了，canvas=" + app.renderer.width + "x" + app.renderer.height);
+  Y.app = app;                 // 挂到内部对象上：诊断/排查时用（Python 能通过 CDP 读到）
+
+  state.stage = "loading-model";
+  say("加载模型：" + modelUrl);
+  /* texture LOD 策略（引擎自带）：
+       full（默认）      给大图集生成完整 mipmap 链
+       single-auto       按模型实际屏幕尺寸生成一张低分辨率贴图
+       false             只用原图，不生成 mipmap
+     实测默认值会在"上传贴图"这步失败（Failed to upload Live2D texture），
+     所以留成可配的，排查时能一个个试。 */
+  const lod = params.get("lod");
+  const modelOptions = lod ? { textureOptions: { lod: lod === "false" ? false : lod } } : {};
+  say("贴图 LOD 选项：" + JSON.stringify(modelOptions));
+  model = await engine.Live2DModel.from(modelUrl, modelOptions);
+  app.stage.addChild(model);
+  Y.model = model;
+
+  /** 兼容补丁 —— 不补这一步，模型永远画不出来（而且报错极具误导性）。
+   *
+   * 引擎渲染时读 `texture.source._gpuData[renderer.uid]`，
+   * 但 **PIXI 8.13.1 的 TextureSource 上并没有 `_gpuData` 这个字段**
+   * （`renderer.texture.bind()` 内部不碰它，所以单独调 bind 是好的）。
+   * 读一个 undefined 的属性会抛 "Cannot convert undefined or null to object"，
+   * 而引擎把这句吞掉、换成 "Failed to upload Live2D texture." —— 于是
+   * 现象是"模型就绪但画面永远空白"，查起来非常费劲。
+   *
+   * 补一个空对象即可：引擎读到 undefined 会判成"还没上传"，走正常的 bind 路径。
+   * 如果哪天引擎或 PIXI 修好了，这个补丁会自动什么都不做（先判断存在性）。
+   */
+  const patched = patchTextureGpuData(model);
+  if (patched) say("已为 " + patched + " 个贴图补上 _gpuData 字段（引擎与 PIXI 的兼容问题）");
+
+  coreModel = findCoreModel(model);
+  state.stage = "fitting";
+  fit();
+  window.addEventListener("resize", fit);
+
+  /** 推进一帧：更新模型 + 渲染。**由 Python 通过 CDP 调**（见 tick 接口）。
+   *
+   * ★ 为什么要 Python 来驱动帧：
+   *   实测在无头 Edge 里 requestAnimationFrame 几乎不触发 ——
+   *   PIXI 的 ticker 整个生命周期只跑了 **1 次**（state.frames 停在 1），
+   *   所以引擎从没画过一帧，截图永远是全透明。
+   *   改成由抓帧的一方（Python）显式 tick，帧率可控，也不会白烧 CPU。 */
+  function tick(delta) {
+    const dt = Number(delta) || 16.7;
+    if (model && typeof model.update === "function") {
+      try { model.update(dt); } catch (e) { /* 单帧更新失败不该中断 */ }
+    }
+    if (app) app.renderer.render(app.stage);
+    state.frames += 1;
+    return state.frames;
+  }
+
+  // 探测 ticker 到底跑不跑；不跑就自己用 setInterval 兜一份，
+  // 这样把这一页单独用浏览器打开也看得到动画。
+  const framesAtStart = state.frames;
+  setTimeout(() => {
+    const tickerAlive = state.frames > framesAtStart;
+    state.tickerAlive = tickerAlive;
+    say("ticker 是否自己在跑：" + tickerAlive);
+    if (!tickerAlive) {
+      setInterval(() => { try { window.yachiyo.tick(33); } catch (e) { /* 忽略 */ } }, 33);
+      say("已启用 setInterval 兜底驱动");
+    }
+  }, 700);
+
+  // ── 就绪：把真正的实现接到先前挂好的接口上 ──
+  Object.assign(window.yachiyo, {
+    tick,
+    setMouth(value) {
+      if (!coreModel) throw new Error("拿不到模型的参数接口（mouthPath 为空）");
+      const v = Math.max(0, Math.min(1, Number(value) || 0));
+      state.mouth = v;
+      coreModel.setParameterValueById(MOUTH_PARAM, v);
+      // 读回来，让调用方确认真的写进模型了（不是只改了个变量）
+      return { wanted: v, readBack: coreModel.getParameterValueById(MOUTH_PARAM),
+               path: state.mouthPath };
+    },
+    setExpression(name) {
+      model.expression(String(name));
+      return true;
+    },
+    playMotion(group, index) {
+      return model.motion(String(group), Number.isInteger(index) ? index : undefined);
+    },
+    setScale(k) {
+      state.scale = Number(k) || 1;
+      fit();
+      return state.scale;
+    },
+    listMotions() {
+      const s = model.internalModel && model.internalModel.settings;
+      if (!s) return {};
+      // 这个引擎里 `motionGroups` 是 undefined，动作定义在 settings.motions 上
+      // （实测：物体 groups 为 None，而 settings 的键里有 motions / idle）。
+      const out = {};
+      const motions = s.motions;
+      if (motions && typeof motions === "object" && !Array.isArray(motions)) {
+        for (const [group, list] of Object.entries(motions)) {
+          out[group] = Array.isArray(list) ? list.length : (list ? 1 : 0);
+        }
+        return out;
+      }
+      for (const g of (s.motionGroups || [])) {
+        try { out[g] = s.getMotionFiles(g).length; } catch (e) { out[g] = -1; }
+      }
+      return out;
+    },
+    listExpressions() {
+      const s = model.internalModel && model.internalModel.settings;
+      const ex = (s && s.expressions) || [];
+      return ex.map((e) => e.Name || e.name || e.Id || e.id);
+    },
+  });
+
+  state.ready = true;
+  state.stage = "ready";
+  say("模型就绪：动作组=" + JSON.stringify(window.yachiyo.listMotions())
+      + " 表情=" + JSON.stringify(window.yachiyo.listExpressions())
+      + " 口型路径=" + (state.mouthPath || "(无)"));
+  try { model.motion("Idle"); } catch (e) { say("Idle 动作启动失败：" + e); }
+}
+
+start().catch((err) => Y.fail(err && err.message ? err.message : err));
+</script>
+</body>
+</html>
