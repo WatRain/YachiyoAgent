@@ -4,13 +4,17 @@
 #   & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt `
 #       --extra-index-url https://pypi.org/simple
 
-# UI（Flet 1.0：flet / flet-cli / flet-desktop 锁步发布）
-flet[all]>=1.0.0,<2
+# 界面不用 Python 装 —— 前端是 Electron（见 desktop/）。
+# 这个文件只装后端与核心逻辑要用的东西；
+# Electron 侧依赖在 desktop/package.json 里（npm install）。
 
 # 注意：API Key 的持久化**不需要额外依赖**。
-# core/secrets.py 用 ctypes 直调 Windows 凭据管理器（advapi32），
-# 不再用 flet-secure-storage —— 那个插件走 Flet 的 invoke-method IPC，
-# 在真机上会抛 RuntimeError 甚至无限等待，实测把首次引导卡死过。
+# core/secrets.py 用 ctypes 直调 Windows 凭据管理器（advapi32），调用在
+# 当前进程内完成，既不经过任何插件 IPC，也不用把密钥写进文件。
+
+# 后端：本机 HTTP + WebSocket 服务（界面和接口都从这一个源走）
+fastapi>=0.115
+uvicorn>=0.30
 
 # 统一的模型调用层（支持任意 OpenAI 兼容端点）
 litellm>=1.100
