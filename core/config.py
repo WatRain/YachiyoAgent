@@ -2,12 +2,12 @@
 
 **这里永远不放 API Key。** 机密只走 core/secrets.py。
 
-存放位置：%FLET_APP_STORAGE_DATA%/config.json
+存放位置：<数据目录>/config.json（见 core/paths.py 的 data_dir()）
 写入方式：先写 .tmp 再原子替换，中途崩溃不会毁掉原配置。
 
 两个名字一旦定下就永不更改，否则用户数据和系统凭据会失联：
   - ProviderConfig.id   （它是 API Key 的存储键）
-  - 安装包的 <company>/<product> 目录名（打包文档里另说）
+  - 安装包的目录名（Electron 的 userData，见 desktop/main.js）
 """
 
 from __future__ import annotations
@@ -56,6 +56,8 @@ class AppConfig(BaseModel):
 
     # UI 偏好
     theme: str = "dark"
+    # 角色物理（头发/衣摆的摆动）。实测很吃帧预算：开着约 36fps，关掉能到 60fps。
+    live2d_physics: bool = True
 
 
 def _migrate(raw: dict) -> AppConfig:

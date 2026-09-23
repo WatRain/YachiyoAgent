@@ -31,24 +31,31 @@ import urllib.parse
 from functools import partial
 from pathlib import Path
 
+from core import paths as core_paths
+
 log = logging.getLogger(__name__)
 
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "live2d"
+ASSETS_DIR = core_paths.assets_dir()
 MODEL_JSON_SUFFIXES = (".model3.json", ".model.json")
 
 
 def find_model(project_root: Path | None = None) -> Path | None:
-    """在 models/ 下面找一个 Live2D 模型目录（含 *.model3.json 或 *.model.json）。
+    """找一个 Live2D 模型目录（含 *.model3.json 或 *.model.json）。
 
     Cubism 4 是 model3.json，Cubism 2 是 model.json —— 两种都认。
     找到多个时按名字排序取第一个，保证行为稳定（不是随机挑）。
+
+    搜索目录见 core.paths.model_roots()：数据目录优先（打包后用户放模型的地方），
+    最后才是随程序分发的内置模型。传了 project_root 就只找它下面的 models/
+    （测试用，行为跟以前一样）。
     """
-    root = (project_root or Path(__file__).resolve().parent.parent.parent) / "models"
-    if not root.is_dir():
-        return None
-    for d in sorted(p for p in root.iterdir() if p.is_dir()):
-        if model_json_in(d) is not None:
-            return d
+    roots = [project_root / "models"] if project_root else core_paths.model_roots()
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for d in sorted(p for p in root.iterdir() if p.is_dir()):
+            if model_json_in(d) is not None:
+                return d
     return None
 
 

@@ -49,6 +49,13 @@
     model: [0, 0],
     mouth: 0,
     mouthPath: "",        // 口型参数写在哪个对象上（不同版本路径不一样）
+    look: null,           // 当前的视线目标（画面坐标），null = 正前方
+    renderedEye: null,    // 最近一帧**渲染时**真正用到的眼球参数（±1）
+    autoTick: false,      // 页面自带的兜底循环有没有在跑（外部驱动时必须关）
+    externalDrive: false, // 帧是不是由外部（Python）驱动
+    modelAutoUpdate: null, // 模型的自动更新（挂在全局共享 ticker 上）有没有关掉
+    tickerAlive: null,
+    physics: null,         // 物理（头发/衣摆）在不在跑：false 换帧率
     deps: {},
   };
 
@@ -83,6 +90,10 @@
     setScale() { return notReady(); },
     listMotions() { return notReady(); },
     listExpressions() { return notReady(); },
+    lookAt() { return notReady(); },
+    lookForward() { return notReady(); },
+    eyeBall() { return notReady(); },
+    setPhysics() { return notReady(); },
   };
 
   window.__yachiyo.say("接口就位");
@@ -150,6 +161,104 @@ function findCoreModel(m) {
     }
   }
   return null;
+}
+
+/** 参数名的两种形态：CubismId 对象（有 getString）或裸串 */
+function paramName(id) {
+  if (!id) return "";
+  if (typeof id === "string") return id;
+  if (typeof id.getString === "function") {
+    const s = id.getString();
+    return s && s.s ? s.s : String(s);
+  }
+  if (id._id && id._id.s) return id._id.s;
+  return String(id);
+}
+
+/** 按名字找参数下标。
+ *  ★ 为什么不用 coreModel.getParameterValueById("ParamEyeBallX")：
+ *    那条路要求名字**已经注册进引擎的 id 表**，没写过就读会返回 null
+ *    （实测：本模型 796 个参数，按名字读 ParamEyeBallX / ParamMouthOpenY 都是 null，
+ *      先 set 一次再读才拿到值）。
+ *    底层 core model 的 parameters.ids / parameters.values 是按下标对齐的，
+ *    直接查下标最可靠。 */
+const _paramIndexCache = new Map();
+function paramIndex(want) {
+  if (!coreModel) return -1;
+  const raw = coreModel._model;
+  const ids = raw && raw.parameters && raw.parameters.ids;
+  if (!ids) return -1;
+  for (let i = 0; i < ids.length; i++) {
+    if (paramName(ids[i]) === want) return i;
+  }
+  return -1;
+}
+
+/** 按下标读当前参数值（读不到返回 null） */
+function paramValue(index) {
+  if (index < 0 || !coreModel) return null;
+  const raw = coreModel._model;
+  const values = raw && raw.parameters && raw.parameters.values;
+  if (!values || index >= values.length) return null;
+  return values[index];
+}
+
+/** ★ 引擎按"参数名"写参数时用的是**对象身份**比较
+ *  （`getParameterIndex`：`parameterId != this._parameterIds.at(i)`），
+ *  而这个模型里两边的 CubismId 不是同一个实例 → 查不到 → 引擎给这个名字
+ *  分配一个**虚构下标**（实测：模型只有 796 个参数，ParamEyeBallX 却拿到 832）
+ *  → `addParameterValueById` 静默失效。
+ *  症状：视线坐标明明到了焦点控制器（targetX=-0.93），眼球参数却一动不动
+ *  （恒等于默认值 0.23 / 0.25）。
+ *
+ *  这里把 getParameterIndex 换成按**名字**比较 —— 于是所有按名字的读写
+ *  （addParameterValueById / setParameterValueById / getParameterValueById）
+ *  都落到真实下标上。查不到的名字仍旧走引擎原来的逻辑。 */
+function patchParameterIndexById(cm) {
+  if (!cm || cm.__namePatch) return false;
+  const ids = cm._parameterIds;
+  if (!ids || typeof ids.getSize !== "function" || typeof ids.at !== "function") return false;
+  const original = cm.getParameterIndex.bind(cm);
+  /* ★ 先把名字表建好，**不要**每次线性扫描：
+   *   引擎一帧会按名字查约 75 次，这个模型有 796 个参数，于是每帧几万次字符串比较。
+   *   不过 A/B/A/B 实测两种写法**没有可分辨的差别**（都在 18~20ms 的噪声里，
+   *   见 scratch/probe_perf9.py）—— 保留 Map 只是因为它更直观、做的无用功更少。
+   *   查不到的名字仍旧走引擎原来的逻辑。 */
+  const byName = new Map();
+  for (let i = 0; i < ids.getSize(); i++) {
+    const name = paramName(ids.at(i));
+    if (!byName.has(name)) byName.set(name, i);
+  }
+  cm.getParameterIndex = function (parameterId) {
+    const found = byName.get(paramName(parameterId));
+    return found === undefined ? original(parameterId) : found;
+  };
+  cm.__namePatch = true;
+  return true;
+}
+
+/** ★ 焦点这类"每帧叠加"的参数只在**渲染那一瞬间**有效，抓完帧再读就没了。
+ *
+ *  引擎一帧的顺序（实测轨迹，core=核心参数值）：
+ *    saveParameters(前) core=0.1226
+ *    updateFocus(后)    core=0.0839   ← 把焦点(-0.039)加进去
+ *    coreModel.update   core=0.0839   ← ★ 渲染用的就是这一刻的值
+ *    loadParameters(后) core=0.1226   ← 参数被读回上一层，焦点叠加被撤掉
+ *  所以在 tick 之后读参数，读到的是基数（一直是 0.23 那个值），
+ *  很容易误判成"焦点根本没进模型"。这里把渲染那一刻的值抄下来。 */
+function watchRenderedParameters(cm, iEyeX, iEyeY) {
+  if (!cm || cm.__watched) return false;
+  const original = cm.update.bind(cm);
+  cm.update = function (...args) {
+    state.renderedEye = { x: paramValue(iEyeX), y: paramValue(iEyeY) };
+    /* 帧计数也挂在这里 —— 这是**唯一**保证每渲染帧走一次的地方。
+       不能只数 tick()：产品模式下帧是引擎自己的 PIXI ticker 驱动的
+       （rAF 节流），根本不经过 tick()，那样界面上会一直显示 0 fps。 */
+    state.frames += 1;
+    return original(...args);
+  };
+  cm.__watched = true;
+  return true;
 }
 
 function fit() {
@@ -242,6 +351,7 @@ async function start() {
   document.body.appendChild(app.canvas);
   say("PIXI Application 建好了，canvas=" + app.renderer.width + "x" + app.renderer.height);
   Y.app = app;                 // 挂到内部对象上：诊断/排查时用（Python 能通过 CDP 读到）
+  Y.PIXI = PIXI;               // 同上：Python 侧要自己建 RenderTexture 时必须拿得到这个命名空间
 
   state.stage = "loading-model";
   say("加载模型：" + modelUrl);
@@ -274,63 +384,222 @@ async function start() {
   if (patched) say("已为 " + patched + " 个贴图补上 _gpuData 字段（引擎与 PIXI 的兼容问题）");
 
   coreModel = findCoreModel(model);
+  if (patchParameterIndexById(coreModel)) {
+    say("已修好引擎的参数名查找（原本按名字写参数会静默失效）");
+  }
+  watchRenderedParameters(coreModel, paramIndex("ParamEyeBallX"), paramIndex("ParamEyeBallY"));
+
+  /* 物理开关。
+   *
+   * 关掉就是把 internalModel.physics 置 null —— 引擎里那句是
+   *   `(_d = this.physics) == null ? void 0 : _d.evaluate(model, dt)`
+   * （app/assets/live2d/vendor/pixi-live2d-engine.cubism.es.js 附近），置 null 是安全的。
+   *
+   * ★ 为什么值得给个开关（实测，Electron 420×700 窗口、视线+口型一直在动）：
+   *   物理开 + rAF → 36.0 fps；物理关 + rAF → 57.8~61.7 fps。
+   *   即物理吃掉了**大约一半的帧时间**（16.2ms → 27.8ms）。这个模型很重
+   *   （796 个参数、409 个 drawable、physics3.json 402KB），物理是逐帧按参数算的。
+   *   头发/衣摆会摆更自然，但 36fps 和 60fps 的观感差别很明显，所以交给用户选。
+   *   默认为**开**（好看优先），关掉的那个选项在设置页里。
+   */
+  let physicsSaved = null;
+  function applyPhysics(on) {
+    const im = model && model.internalModel;
+    if (!im) return false;
+    if (im.physics) physicsSaved = im.physics;
+    im.physics = on ? (physicsSaved || im.physics || null) : null;
+    state.physics = Boolean(im.physics);
+    return state.physics;
+  }
+
+  const wantPhysics = new URLSearchParams(location.search).get("physics") !== "0";
+  const physicsOn = applyPhysics(wantPhysics);
+  say("物理：" + (physicsOn ? "开（头发/衣摆会摆）" : "关（为了帧率）"));
+
   state.stage = "fitting";
   fit();
   window.addEventListener("resize", fit);
 
-  /** 推进一帧：更新模型 + 渲染。**由 Python 通过 CDP 调**（见 tick 接口）。
+  /** 推进一帧：更新模型 + 渲染。
    *
-   * ★ 为什么要 Python 来驱动帧：
-   *   实测在无头 Edge 里 requestAnimationFrame 几乎不触发 ——
-   *   PIXI 的 ticker 整个生命周期只跑了 **1 次**（state.frames 停在 1），
-   *   所以引擎从没画过一帧，截图永远是全透明。
-   *   改成由抓帧的一方（Python）显式 tick，帧率可控，也不会白烧 CPU。 */
+   * 现在由页面自己的 rAF 循环驱动（见下面那段 setTimeout），
+   * 也暴露出去给探针用（`window.yachiyo.tick(16.7)`）——
+   * 探针要能手动推进帧才能把"驱动方式"和"渲染开销"分开量。
+   *
+   * 历史：无头 Edge + CDP 抓帧时 rAF 几乎不触发（PIXI 的 ticker 整个生命周期
+   * 只跑了 1 次），所以当时只能由 Python 显式 tick。 */
   function tick(delta) {
     const dt = Number(delta) || 16.7;
     if (model && typeof model.update === "function") {
       try { model.update(dt); } catch (e) { /* 单帧更新失败不该中断 */ }
     }
     if (app) app.renderer.render(app.stage);
-    state.frames += 1;
+    // state.frames 由 watchRenderedParameters 里的 coreModel.update 计数，
+    // 这里不再加 —— 否则外部驱动时一帧会被数两次。
     return state.frames;
   }
 
-  // 探测 ticker 到底跑不跑；不跑就自己用 setInterval 兜一份，
+  // 探测 ticker 到底跑不跑；不跑就自己用 rAF 兜一份，
   // 这样把这一页单独用浏览器打开也看得到动画。
+  //
+  // ★ 驱动方式的选择（实测数据，Electron 420×700 窗口、视线+口型一直在动）：
+  //     setInterval(33)          → 24~27 fps（回调本身的上限是 30，实际还更低）
+  //     requestAnimationFrame    → 58~62 fps
+  //   所以产品里用 rAF。**外部驱动（Python 通过 CDP 调 tick）时必须两处都停掉**：
+  //     1. 这个 rAF 循环
+  //     2. PIXI 的 ticker / automator.autoUpdate —— 模型的 update 挂在全局共享
+  //        ticker 上，停不干净就会两边一起推进模型
+  //   实测：只关掉兜底循环时，1.5 秒静置模型时间自己走了 2141ms，动画节奏全乱。
   const framesAtStart = state.frames;
+  let externalDrive = false;
+  let autoTicker = null;      // rAF 的 id（历史遗留的 setInterval id 也走这里）
+  let autoStop = null;        // rAF 专用：cancelAnimationFrame 得先知道要停
+
+  function stopAutoTicker() {
+    if (autoStop) { autoStop(); autoStop = null; return; }
+    if (autoTicker) { clearInterval(autoTicker); autoTicker = null; }
+  }
+
   setTimeout(() => {
+    if (externalDrive) {
+      say("外部驱动模式：不启用兜底循环");
+      return;
+    }
     const tickerAlive = state.frames > framesAtStart;
     state.tickerAlive = tickerAlive;
     say("ticker 是否自己在跑：" + tickerAlive);
     if (!tickerAlive) {
-      setInterval(() => { try { window.yachiyo.tick(33); } catch (e) { /* 忽略 */ } }, 33);
-      say("已启用 setInterval 兜底驱动");
+      let stopped = false;
+      let last = performance.now();
+      const loop = (now) => {
+        if (stopped) return;
+        const dt = now - last;
+        last = now;
+        try { window.yachiyo.tick(dt > 0 && dt < 250 ? dt : 16.7); } catch (e) { /* 忽略 */ }
+        autoTicker = requestAnimationFrame(loop);
+      };
+      autoTicker = requestAnimationFrame(loop);
+      autoStop = () => { stopped = true; if (autoTicker) cancelAnimationFrame(autoTicker); autoTicker = null; };
+      state.autoTick = true;
+      say("已启用 rAF 驱动（跟着窗口刷新率走）");
     }
   }, 700);
 
   // ── 就绪：把真正的实现接到先前挂好的接口上 ──
   Object.assign(window.yachiyo, {
     tick,
+
+    /** 内部调试入口：让探针/测试能拿到底层对象（产品代码别用这个）。 */
+    _debug() { return { model, app, coreModel }; },
+
+    /** 物理（头发/衣摆）开关。false = 省下约一半帧时间换帧率。 */
+    setPhysics(on) {
+      const value = applyPhysics(Boolean(on));
+      return { physics: value };
+    },
+
+    /** 外部驱动开关。
+     *
+     * setAutoTick(false) = "帧由外面（Python 通过 CDP）驱动"：
+     *   停掉页面自带的兜底循环，并且**停掉 PIXI 的 ticker**（模型的 update 挂在它上面）。
+     *   不停干净的话，两边一起推进模型 —— 实测静置 1.5 秒模型时间自己走了 2141ms。
+     */
+    setAutoTick(on) {
+      externalDrive = !on;
+      stopAutoTicker();
+      /* ★ 关键：模型的自动更新挂在 **PIXI.Ticker.shared**（全局共享 ticker）上，
+         不是 app.ticker —— 只停 app.ticker 完全没用。
+         实测证据：停掉 app.ticker 后静置 1.5 秒，模型时间仍然自己走了 1494ms。
+         正确做法是关掉 automator 的自动更新（引擎自带开关）。 */
+      if (model) {
+        try {
+          model.automator.autoUpdate = externalDrive ? false : true;
+          /* 视线也交给我们驱动：引擎自带的 autoFocus/autoHitTest 是监听 canvas 上
+             的指针事件的，而**无头页面里永远不会有指针经过它**（实测页面里
+             一条 pointermove 都收不到）。留着它只会和我们自己的 lookAt 抢。 */
+          model.automator.autoFocus = false;
+          model.automator.autoHitTest = false;
+        } catch (e) {
+          say("关 automator.autoUpdate 失败：" + e);
+        }
+      }
+      state.autoTick = !!autoTicker;
+      state.externalDrive = externalDrive;
+      state.modelAutoUpdate = !!(model && model.automator && model.automator.autoUpdate);
+      return { autoTick: state.autoTick, externalDrive,
+               modelAutoUpdate: state.modelAutoUpdate };
+    },
     setMouth(value) {
       if (!coreModel) throw new Error("拿不到模型的参数接口（mouthPath 为空）");
       const v = Math.max(0, Math.min(1, Number(value) || 0));
       state.mouth = v;
       coreModel.setParameterValueById(MOUTH_PARAM, v);
-      // 读回来，让调用方确认真的写进模型了（不是只改了个变量）
-      return { wanted: v, readBack: coreModel.getParameterValueById(MOUTH_PARAM),
+      /* ★ 读回来必须用**下标**读（见 paramIndex 的注释）：
+         按名字读会落到引擎的"虚构参数"槽位里，而写和读用的是同一个虚构槽位 ——
+         "读回一致"会变成一个**假绿灯**（模型其实一步没动）。所以这里按下标从
+         模型真正的参数数组里读，读到的值才有意义。 */
+      return { wanted: v, readBack: paramValue(paramIndex(MOUTH_PARAM)),
+               readBackByName: coreModel.getParameterValueById(MOUTH_PARAM),
                path: state.mouthPath };
     },
     setExpression(name) {
       model.expression(String(name));
       return true;
     },
-    playMotion(group, index) {
-      return model.motion(String(group), Number.isInteger(index) ? index : undefined);
+    playMotion(group, index, priority) {
+      // priority: 1=IDLE 2=NORMAL（默认）3=FORCE。
+      // idle 动作本身是 NORMAL 优先级，想打断它做别的动作必须用 FORCE，
+      // 否则会被拒绝（实测返回 false，而且没有任何报错）。
+      return model.motion(String(group),
+                          Number.isInteger(index) ? index : undefined,
+                          Number.isInteger(priority) ? priority : undefined);
     },
     setScale(k) {
       state.scale = Number(k) || 1;
       fit();
       return state.scale;
+    },
+    /** 让角色看向**画面坐标**里的一个点（帧像素，左上角为原点）。
+     *
+     *  ★ 为什么由外面（Python）驱动，而不是让引擎自己跟着鼠标：
+     *    这一页是隐藏的无头页面，鼠标永远不会经过它，浏览器这侧收不到
+     *    任何指针事件 —— 引擎自带的 autoFocus 监听的就是 canvas 上的指针，
+     *    在这里永远是空的。所以位置得由界面那一侧转发进来（见 gaze.py）。
+     *
+     *  model.focus(x, y) 收的是 world/stage 坐标；这一页的 stage 没有位移
+     *  和缩放，所以画面坐标就是 world 坐标。内部会插值过去，参数落在
+     *  ParamEyeBallX/Y（±1）和 ParamAngleX/Y（±30°）上。 */
+    lookAt(x, y) {
+      if (!model) throw new Error("模型没就绪（lookAt）");
+      const cx = Math.max(0, Math.min(app.screen.width, Number(x) || 0));
+      const cy = Math.max(0, Math.min(app.screen.height, Number(y) || 0));
+      model.focus(cx, cy);
+      state.look = [Math.round(cx), Math.round(cy)];
+      return state.look;
+    },
+    /** 视线回正前方。
+     *  ★ 不能拿"画面中心"当正前方：模型的原点在它自己的包围盒上，
+     *    画面中心对模型来说偏上偏右。focusController(0, 0) 才是真正的正前方。 */
+    lookForward() {
+      if (!model) throw new Error("模型没就绪（lookForward）");
+      model.internalModel.focusController.focus(0, 0);
+      state.look = null;
+      return true;
+    },
+    /** 读回眼球参数（±1），用来确认视线真的进了模型而不是只改了个变量。
+     *  读的是**渲染那一刻**的值（见 watchRenderedParameters）。
+     *  顺便把 FocusController 的目标也带出来：目标是喂进去的归一化值，
+     *  参数是引擎算完写进模型的结果 —— 两个一起看，链条才算完整。 */
+    eyeBall() {
+      if (!coreModel) return null;
+      const fc = model && model.internalModel && model.internalModel.focusController;
+      const rendered = state.renderedEye || {};
+      return {
+        x: rendered.x === undefined ? null : rendered.x,
+        y: rendered.y === undefined ? null : rendered.y,
+        target: fc ? { x: fc.targetX, y: fc.targetY } : null,
+        look: state.look,
+      };
     },
     listMotions() {
       const s = model.internalModel && model.internalModel.settings;
