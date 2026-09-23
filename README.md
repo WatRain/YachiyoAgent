@@ -4,7 +4,9 @@
 
 一个 Windows 桌面端的陪伴型 AI 应用。**用户自带 provider 和 API Key，开发者不提供也不接触密钥。**
 
-前端用 [Flet](https://github.com/flet-dev/flet)，模型调用层用 [LiteLLM](https://docs.litellm.ai/)（支持任意 OpenAI 兼容端点）。
+界面是 [Electron](https://www.electronjs.org/)（`desktop/`），后端是本机的一个 [FastAPI](https://fastapi.tiangolo.com/) 服务（`backend/`），
+模型调用层用 [LiteLLM](https://docs.litellm.ai/)（支持任意 OpenAI 兼容端点）。
+Live2D 角色直接画在 Electron 的渲染进程里（`app/assets/live2d/pet.html` + 打包好的 Cubism 引擎）。
 
 ## 快速开始
 
@@ -13,17 +15,28 @@
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2. 装依赖
+# 2. 装 Python 依赖
 & ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
 
 # 如果国内镜像缺包：
 #   ... -m pip install -r requirements.txt --extra-index-url https://pypi.org/simple
 
-# 3. 跑起来
-flet run app\main.py
+# 3. 装前端依赖（第一次要下 Electron，约 100MB）
+cd desktop
+npm install
+cd ..
+
+# 4. 跑起来（会用 .venv 里的 python 起后端）
+cd desktop
+npm start
 ```
 
-**首次使用**：切到「设置」页 → 选一个 provider → 填 Base URL、模型 ID、API Key → 点「测试连接」→ 点「保存」。
+`npm start` 做三件事：起后端（`python -m backend`，端口随机）→ 读 stdout 里的
+`YACHIYO_BACKEND_READY` 拿到端口和 token → 开窗口加载 `http://127.0.0.1:<port>/`。
+界面、接口、Live2D 页面都由这一个源提供，所以没有跨源问题。
+
+**首次使用**：程序自己弹出引导 → 选一个 provider（有内置预设）→ 填 Base URL、模型 ID、API Key → 点「测试连接」→ 点「保存」。
+没配好不会放你进主界面。
 
 常用 provider 填法：
 
@@ -44,7 +57,8 @@ flet run app\main.py
 | **仅内存** | 不勾选时。退出程序即消失 |
 
 > 实现方式：`core/secrets.py` 用 `ctypes` 直调 `advapi32` 的 `CredReadW/CredWriteW/CredDeleteW`。
-> 不依赖任何第三方库，也不经过 Flet 的 IPC —— 调用发生在当前进程内，实测写 8ms / 读 1ms。
+> 不依赖任何第三方库，也不经过任何插件 IPC —— 调用发生在后端进程内，实测写 8ms / 读 1ms。
+> 界面进程拿不到已保存的密钥：读回来的明文只在后端内存里用。
 
 **密钥会发往哪**：只发往你在设置页填的那个地址，**本机直连，不经过任何第三方服务器**。
 
@@ -62,7 +76,7 @@ flet run app\main.py
 
 ## 数据放在哪
 
-打包后 `%APPDATA%\<company>\<product>\data\`；开发期（`flet run`）在 `.flet/storage/data/`。
+打包后 `%APPDATA%\月见八千代\data\`；开发期在项目下的 `.devdata/`（也可以用 `YACHIYO_DATA_DIR` 指定）。
 
 | 文件 | 内容 |
 |---|---|
@@ -77,11 +91,18 @@ flet run app\main.py
 
 ```
 ├─ prompt.md              八千代的人格设定（静态角色卡）
-├─ app/                   界面层（只知道怎么画，不懂对话逻辑）
-│  ├─ main.py             入口：组装界面、管配置、保存对话
-│  └─ views/
-│     ├─ chat.py          聊天界面（流式、停止、节流）
-│     └─ settings.py      设置页（provider、密钥、测试连接）
+├─ backend/               ★ 本机 HTTP/WebSocket 后端（界面与接口都从它出去）
+│  ├─ app.py              FastAPI 应用：配置、provider、密钥、会话、记忆、/ws/chat
+│  ├─ live2d.py           把渲染页与模型资源挂到同一个源上
+│  └─ legacy.py           老版本装在别处的数据，启动时搬过来（只补缺、不覆盖）
+├─ desktop/               ★ Electron 前端
+│  ├─ main.js             主进程：开窗口、起后端、推鼠标位置（视线要）
+│  ├─ backend.js          起后端的进程管理（读 READY 行、探活）
+│  ├─ preload.js          渲染进程唯一的桥（拿 token、最小化/关闭、记日志）
+│  └─ renderer/           界面本身：index.html / style.css / app.js
+├─ app/                   只留 Live2D 部分
+│  ├─ assets/live2d/      pet.html（渲染页）+ 打包好的引擎
+│  └─ live2d/             模型查找、贴图压缩、静态文件的防穿越
 ├─ core/                  核心逻辑（纯 Python，可单独测试）
 │  ├─ chat.py             ★ agent loop：messages 管理、流式、工具调用接口
 │  ├─ memory.py           长期记忆：抽取、解析、注入
@@ -92,14 +113,16 @@ flet run app\main.py
 │  ├─ llm.py              测试连接、错误人话化
 │  ├─ logging_setup.py    日志 + 密钥脱敏
 │  └─ paths.py            数据目录（打包兼容）
-└─ tests/                 94 个测试，不联网、不需要 API Key
+├─ packaging/             PyInstaller 规格（把后端打成 exe）
+├─ models/                放你的 Live2D 模型（见 models/README.md，不进 git）
+└─ tests/                 200+ 个测试，不联网、不需要 API Key
 ```
 
 **三条设计规矩**：
 
-1. **只有 `core/secrets.py` 能碰明文 key**，其他模块拿不到
+1. **只有 `core/secrets.py` 能碰明文 key**，其他模块拿不到；界面进程只有"写进去"和"问有没有"两条路
 2. **只有 `core/providers.py` 能把用户配置翻译成 SDK 参数**，界面层不出现 `api_base`
-3. **界面层的耗时操作都是 `async`**（Flet 1.0 里同步处理器会冻住窗口）
+3. **界面不含业务逻辑**：它只画画和转发，聊天、记忆、密钥都在后端
 
 ## 跑测试
 
@@ -114,4 +137,15 @@ flet run app\main.py
 - **只做了对话 + 记忆**。工具调用（搜索、提醒）的框架在 `core/chat.py` 里留好了接口（`add_tools()`），`core/tools.py` 里有骨架，但还没接线
 - **没有对话列表 / 多会话**：目前只有一个持续对话，退出时自动保存、下次启动恢复
 - **记忆抽取每轮多花一次 API 调用**（用便宜模型/低 max_tokens 更省）
-- 开发时用 `flet run` 运行；打包成 exe 见 `docs/WIN_RELEASE.md`
+- 开发时 `npm start`（见上）；打成安装包：
+
+  ```powershell
+  cd desktop
+  npm run pack   # 只出解包目录 release\win-unpacked，方便先试
+  npm run dist   # 出安装包 release\YachiyoAgent-Setup-<版本>.exe
+  ```
+
+  两条都会先把后端用 PyInstaller 打成 `packaging/dist/yachiyo-backend/`（见 `packaging/backend.spec`），
+  再让 electron-builder 把它塞进 `resources/backend/`。
+- **打包版不含模型**：Live2D 模型要自己放到 `%APPDATA%\月见八千代\data\models\<名字>\`
+  （或设 `YACHIYO_MODEL_DIR`）。见 `models/README.md`。
