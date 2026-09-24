@@ -72,6 +72,7 @@ function applyTheme(mode, { persist = false } = {}) {
   document.documentElement.dataset.theme = resolved;
   // 角色页也要跟着换：它靠 color-scheme 决定 iframe 底色是透明（深色）还是近白（浅色）
   try { petWindow()?.yachiyo?.setTheme?.(resolved); } catch { /* 页面还没就绪就算了 */ }
+  throttlePetDuringTheme();
 
   // 标题栏的快捷开关 + 设置里的三选一，都是 data-theme-set，一起对齐
   for (const btn of document.querySelectorAll("[data-theme-set]")) {
@@ -375,6 +376,32 @@ function autoGrow() {
 
 function petWindow() {
   try { return ui.pet.contentWindow; } catch { return null; }
+}
+
+/* 切主题时给角色页降载。
+ *
+ * 实测（CDP Performance 域）：静置 1.5 秒里 TaskDuration=1.511s、ScriptDuration=
+ * 1.486s —— 主线程约 99% 的时间都被 Live2D 的每帧脚本吃掉（update ~7-12ms +
+ * render ~5ms，75Hz 屏上正好贴满）。换主题自己只花 ~43ms 样式重算（19 次 recalc），
+ * 但它落在一个没有余量的线程上，于是过渡期间必然掉帧（最坏帧 66~93ms、
+ * 1.6 秒里有 6 帧 >50ms）。做法：过渡这 800ms 里把模型降到 20fps 让出主线程，
+ * 之后再恢复 —— 实测最坏帧 66.7 → 40.0ms、>50ms 的卡顿帧 6 → 0。
+ *
+ * 为什么是降载而不是暂停：暂停（setPaused）同样能清零卡顿，但角色会硬停在
+ * 半空一下，看着比掉几帧更怪；20fps 只是变慢，几乎看不出来。 */
+const PET_FPS_CAP = 60;
+const PET_FPS_DURING_THEME = 20;
+const PET_THROTTLE_MS = 800;
+let petThrottleTimer = 0;
+
+function throttlePetDuringTheme() {
+  const api = petWindow()?.yachiyo;
+  if (!api || typeof api.setFrameCap !== "function") return;   // 角色页还没就绪就算了
+  clearTimeout(petThrottleTimer);
+  try { api.setFrameCap(PET_FPS_DURING_THEME); } catch { return; }
+  petThrottleTimer = setTimeout(() => {
+    try { petWindow()?.yachiyo?.setFrameCap?.(PET_FPS_CAP); } catch { /* 忽略 */ }
+  }, PET_THROTTLE_MS);
 }
 
 function pulseMouth() {

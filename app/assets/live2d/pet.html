@@ -367,6 +367,39 @@ async function start() {
     engine.configureCubismSDK({ memorySizeMB: WORK_MEMORY_MB });
   }
 
+  /* ── 帧率上限 ──
+   *
+   * ★ 为什么要封顶（实测，CDP Performance 域）：
+   *   静置 1.5 秒里 TaskDuration=1.511s、ScriptDuration=1.486s —— **主线程 ~99%
+   *   的时间都在跑脚本**，几乎全是这个模型的 update + render。这台机器的屏幕是
+   *   75Hz（父页面 rAF 中位间隔 13.3ms），模型就跟着跑 75fps。封到 60 直接省下
+   *   约 20% 的主线程，留给界面（切主题、发消息、滚动）——这些一旦发生就会掉帧。
+   *   60 也能整除 60Hz 屏（绝大多数用户），不会出现 75/60 那种 3:2 的节奏抖动。
+   *
+   * ★ 真正的闸门在本页自己的 rAF 循环（下面的 startPacer），这里的 maxFPS 只是
+   *   顺手设上：万一将来有谁把 PIXI 的 ticker 又启动了，至少还有个上限兜着。
+   *   实测 PIXI 自己的 maxFPS 不干净（~68.8fps 且节奏不规则，脚本时间只省 4.5%），
+   *   所以产品不靠它 —— 见 startPacer 上面那段注释里的数字与 PIXI 源码判据。
+   *
+   * ★ 声明放这里而不是下面 ticker 那一段：app.init 之后马上就要用（下面那句
+   *   applyFrameCap()），`let` 有暂时性死区，放后面会报
+   *   "Cannot access 'frameCap' before initialization"（已踩）。
+   *
+   * 0 = 不封顶。父页面在切主题的过渡期间会临时调低（setFrameCap(20)）再调回来。
+   */
+  const DEFAULT_FPS_CAP = 60;
+  let frameCap = DEFAULT_FPS_CAP;
+
+  function applyFrameCap() {
+    const v = frameCap > 0 ? frameCap : 0;
+    try { if (app && app.ticker) app.ticker.maxFPS = v; } catch (e) { /* 忽略 */ }
+    try {
+      if (Y.PIXI && Y.PIXI.Ticker && Y.PIXI.Ticker.shared) Y.PIXI.Ticker.shared.maxFPS = v;
+    } catch (e) { /* 忽略 */ }
+    state.fpsCap = v;
+    return v;
+  }
+
   state.stage = "creating-app";
   PIXI.extensions.add(engine.Live2DPlugin);      // 必须先注册渲染管线
   app = new PIXI.Application();
@@ -383,6 +416,8 @@ async function start() {
   say("PIXI Application 建好了，canvas=" + app.renderer.width + "x" + app.renderer.height);
   Y.app = app;                 // 挂到内部对象上：诊断/排查时用（Python 能通过 CDP 读到）
   Y.PIXI = PIXI;               // 同上：Python 侧要自己建 RenderTexture 时必须拿得到这个命名空间
+  applyFrameCap();             // 帧率上限（见上面那段注释）：真正的闸门在下面的 pacer
+  say("帧率上限：" + (frameCap || "不封顶") + "fps（由本页 pacer 执行）");
 
   state.stage = "loading-model";
   say("加载模型：" + modelUrl);
@@ -470,18 +505,28 @@ async function start() {
     return state.frames;
   }
 
-  // 探测 ticker 到底跑不跑；不跑就自己用 rAF 兜一份，
-  // 这样把这一页单独用浏览器打开也看得到动画。
-  //
-  // ★ 驱动方式的选择（实测数据，Electron 420×700 窗口、视线+口型一直在动）：
-  //     setInterval(33)          → 24~27 fps（回调本身的上限是 30，实际还更低）
-  //     requestAnimationFrame    → 58~62 fps
-  //   所以产品里用 rAF。**外部驱动（Python 通过 CDP 调 tick）时必须两处都停掉**：
-  //     1. 这个 rAF 循环
-  //     2. PIXI 的 ticker / automator.autoUpdate —— 模型的 update 挂在全局共享
-  //        ticker 上，停不干净就会两边一起推进模型
-  //   实测：只关掉兜底循环时，1.5 秒静置模型时间自己走了 2141ms，动画节奏全乱。
-  const framesAtStart = state.frames;
+  /* ── 驱动：这一页自己按帧率上限推进，不让两个 PIXI ticker 跟着刷新率空烧 ──
+   *
+   * 历史与实测（Electron 420×700 窗口、视线+口型一直在动）：
+   *   setInterval(33) → 24~27 fps；requestAnimationFrame → 58~62 fps。
+   * 后来量清楚真正的毛病是**谁在驱动**：
+   *   · 模型的自动更新挂在全局共享 ticker（PIXI.Ticker.shared）的 automator 上，
+   *     渲染挂在 app.ticker 上 —— 两个 ticker 各自跟着屏幕刷新率跑。这块屏是
+   *     75Hz，于是静置时模型的脚本占用把主线程吃到 ~99%（CDP Performance 实测：
+   *     1.5 秒里 ScriptDuration 1.486 秒），界面做任何事（切主题、发消息）都掉帧。
+   *   · PIXI 的 maxFPS 也给不出干净的 60fps：它的判据是
+   *       n = (now - lastFrame) | 0; if (n < 1000/60) return; lastFrame = now - n % (1000/60)
+   *     整数截断 + 浮点取余 ⇒ 实测只跑到 ~68.8fps，节奏还不规则，脚本时间只省 4.5%。
+   *
+   * 所以产品里改成**自己推进**：关掉 automator 的自动更新、停掉 app.ticker，
+   * 由本页的 rAF 循环用累加器严格按 frameCap 出帧，dt 传真实间隔（动画时间不漂）。
+   * 依据（实测）：autoUpdate=false 后模型完全冻结（帧计数 6867→6867 / 1s），
+   * 而手动 tick(16.7)×60 恰好推进 60 帧（6867→6927）—— 动作、物理、口型都在
+   * tick 这条路上，所以自己驱动不会丢东西。引擎（含自动更新）只在共享 ticker 上，
+   * app.ticker 停掉不影响模型推进（实测：app.ticker 还在跑时 autoUpdate=false 就已经冻结）。
+   *
+   * 外部驱动（探针用 Python 调 tick）仍然可用：setAutoTick(false) 会停掉这个循环。
+   * 窗口最小化时 Chromium 会挂起 rAF，这个循环自然停摆 —— 顺带省下后台 CPU。 */
   let externalDrive = false;
   let autoTicker = null;      // rAF 的 id（历史遗留的 setInterval id 也走这里）
   let autoStop = null;        // rAF 专用：cancelAnimationFrame 得先知道要停
@@ -491,30 +536,58 @@ async function start() {
     if (autoTicker) { clearInterval(autoTicker); autoTicker = null; }
   }
 
-  setTimeout(() => {
-    if (externalDrive) {
-      say("外部驱动模式：不启用兜底循环");
-      return;
+  /** 交出驱动权：关掉 automator 的自动更新 + 停掉 app.ticker，只留本页的循环。 */
+  function takeOverDriving() {
+    if (model) {
+      try {
+        model.automator.autoUpdate = false;
+        /* 视线也交给我们驱动：引擎自带的 autoFocus/autoHitTest 是监听 canvas 上
+           的指针事件的，而**无头页面里永远不会有指针经过它**（实测页面里
+           一条 pointermove 都收不到）。留着它只会和我们自己的 lookAt 抢。 */
+        model.automator.autoFocus = false;
+        model.automator.autoHitTest = false;
+      } catch (e) {
+        say("关 automator.autoUpdate 失败：" + e);
+      }
+      state.modelAutoUpdate = !!(model.automator && model.automator.autoUpdate);
     }
-    const tickerAlive = state.frames > framesAtStart;
-    state.tickerAlive = tickerAlive;
-    say("ticker 是否自己在跑：" + tickerAlive);
-    if (!tickerAlive) {
-      let stopped = false;
-      let last = performance.now();
-      const loop = (now) => {
-        if (stopped) return;
-        const dt = now - last;
+    if (app && app.ticker) app.ticker.stop();
+  }
+
+  /** 本页自己的帧循环：rAF + 累加器，严格按 frameCap 出帧。 */
+  function startPacer() {
+    if (autoTicker) return;
+    let stopped = false;
+    let last = performance.now();      // 上一次**真正推进**的时刻（不是上一次 rAF）
+    let acc = 0;                       // 累加器：只用来决定"这一帧推不推"，不参与时间
+    const loop = (now) => {
+      if (stopped) return;
+      const dt = now - last;           // 真实间隔：传给模型，动画时间不会漂
+      const minMs = frameCap > 0 ? 1000 / frameCap : 0;
+      acc += dt;
+      /* ★ 为什么用单独的累加器，而不是把余数塞回 last（踩过的坑）：
+         把余数写回 last（`last = now - dt % minMs`）会让"下次该推进的时刻"偏离
+         vsync 网格 —— 75Hz 屏 + 60fps 上限时几乎每次推进都要多等一个 vsync，
+         实测掉到 ~50fps（比不封顶的 73fps 还差）。现在只在"这一帧推不推"上做
+         选择，推进时刻始终落在窗口自己的 vsync 网格上：75Hz 屏是"连推 4 帧、
+         第 5 帧歇一次"→ 平均 60fps，而第 5 帧的空档正好让出主线程。
+         `acc -= minMs` 而不是清零，保证长跑平均就是 frameCap；-1ms 是抗浮点抖动
+         的容差（不然 13.31+13.32 这种真间隔会偶尔少推一帧，掉成 45fps）。 */
+      if (minMs <= 0 || acc >= minMs - 1) {
+        acc = minMs > 0 ? Math.max(0, acc - minMs) : 0;
         last = now;
         try { window.yachiyo.tick(dt > 0 && dt < 250 ? dt : 16.7); } catch (e) { /* 忽略 */ }
-        autoTicker = requestAnimationFrame(loop);
-      };
+      }
       autoTicker = requestAnimationFrame(loop);
-      autoStop = () => { stopped = true; if (autoTicker) cancelAnimationFrame(autoTicker); autoTicker = null; };
-      state.autoTick = true;
-      say("已启用 rAF 驱动（跟着窗口刷新率走）");
-    }
-  }, 700);
+    };
+    autoTicker = requestAnimationFrame(loop);
+    autoStop = () => { stopped = true; if (autoTicker) cancelAnimationFrame(autoTicker); autoTicker = null; };
+    state.autoTick = true;
+  }
+
+  takeOverDriving();
+  startPacer();
+  say("驱动：本页 rAF 循环，上限 " + (frameCap || "不封顶") + "fps（PIXI ticker 已停）");
 
   // ── 就绪：把真正的实现接到先前挂好的接口上 ──
   Object.assign(window.yachiyo, {
@@ -532,33 +605,39 @@ async function start() {
     /** 外部驱动开关。
      *
      * setAutoTick(false) = "帧由外面（Python 通过 CDP）驱动"：
-     *   停掉页面自带的兜底循环，并且**停掉 PIXI 的 ticker**（模型的 update 挂在它上面）。
-     *   不停干净的话，两边一起推进模型 —— 实测静置 1.5 秒模型时间自己走了 2141ms。
+     *   停掉本页的 rAF 循环，并确保没有别的驱动者（automator.autoUpdate=false、
+     *   app.ticker 停掉）—— 不停干净的话两边会一起推进模型。
+     * setAutoTick(true) = 交还给本页自己的循环（见上面 startPacer 的注释）。
+     *
+     * 注意 modelAutoUpdate 现在**恒为 false**：产品改成自己驱动之后，引擎的自动
+     * 更新一直是关的，模型由 window.yachiyo.tick(dt) 推进（动作/物理/口型都在里面）。
      */
     setAutoTick(on) {
       externalDrive = !on;
       stopAutoTicker();
-      /* ★ 关键：模型的自动更新挂在 **PIXI.Ticker.shared**（全局共享 ticker）上，
-         不是 app.ticker —— 只停 app.ticker 完全没用。
-         实测证据：停掉 app.ticker 后静置 1.5 秒，模型时间仍然自己走了 1494ms。
-         正确做法是关掉 automator 的自动更新（引擎自带开关）。 */
-      if (model) {
-        try {
-          model.automator.autoUpdate = externalDrive ? false : true;
-          /* 视线也交给我们驱动：引擎自带的 autoFocus/autoHitTest 是监听 canvas 上
-             的指针事件的，而**无头页面里永远不会有指针经过它**（实测页面里
-             一条 pointermove 都收不到）。留着它只会和我们自己的 lookAt 抢。 */
-          model.automator.autoFocus = false;
-          model.automator.autoHitTest = false;
-        } catch (e) {
-          say("关 automator.autoUpdate 失败：" + e);
-        }
-      }
+      if (externalDrive) takeOverDriving();
+      else startPacer();
       state.autoTick = !!autoTicker;
       state.externalDrive = externalDrive;
       state.modelAutoUpdate = !!(model && model.automator && model.automator.autoUpdate);
       return { autoTick: state.autoTick, externalDrive,
                modelAutoUpdate: state.modelAutoUpdate };
+    },
+
+    /** 帧率上限（0 = 不封顶）。默认 60，见上面那段注释里的实测理由。
+     *
+     * 父页面在**切主题的过渡期间**会临时调到 20，过渡完（约 800ms）再调回 60：
+     * 主线程本来就被模型吃到 99%，切主题还要再花 ~43ms 样式重算，必然掉帧；
+     * 实测把模型降载能把 66.7ms 的最坏帧压到 40ms、>50ms 的卡顿帧清零。 */
+    setFrameCap(fps) {
+      frameCap = Math.max(0, Math.min(240, Number(fps) || 0));
+      const v = applyFrameCap();
+      return {
+        fpsCap: v,
+        appMaxFPS: app && app.ticker ? app.ticker.maxFPS : null,
+        sharedMaxFPS: (Y.PIXI && Y.PIXI.Ticker && Y.PIXI.Ticker.shared)
+          ? Y.PIXI.Ticker.shared.maxFPS : null,
+      };
     },
     setMouth(value) {
       if (!coreModel) throw new Error("拿不到模型的参数接口（mouthPath 为空）");
