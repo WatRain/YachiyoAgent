@@ -442,12 +442,13 @@ function bootPanel() {
     ui.panelStatus.textContent = (state.live2d && state.live2d.message) || "没有可用的 Live2D 模型";
     return;
   }
-  const physics = state.cfg && state.cfg.live2d_physics === false ? "0" : "1";
-  // 主题也要传：角色页靠 color-scheme 决定 iframe 的底色是透明还是近白（见 pet.html 里的注释），
+  // 界面不再提供物理开关（关掉物理角色会僵在那儿，用户反馈太怪），所以这里也不传 physics：
+  // pet.html 仍然认 ?physics=0，那是留给调试/自动化的口子，不在界面上出现。
+  // 主题必须传：角色页靠 color-scheme 决定 iframe 的底色是透明还是近白（见 pet.html 里的注释），
   // 不传的话深色主题下面板里就是一块白。
   const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
   const url = state.apiBase.replace(/\/$/, "") + state.live2d.page
-    + `?model=${encodeURIComponent(state.live2d.model)}&physics=${physics}&theme=${theme}`;
+    + `?model=${encodeURIComponent(state.live2d.model)}&theme=${theme}`;
   ui.pet.src = url;
   watchGaze();
   pollPanel();
@@ -489,9 +490,8 @@ async function pollPanel() {
     } else {
       lastFrameSample = { t: now, frames: info.frames };
     }
-    const phys = info.physics === false ? "物理关" : "物理开";
-    // 状态行只说"能不能用"，帧率在这里是噪音（真要查帧率看下面每 15 秒那行日志）
-    ui.panelStatus.textContent = `模型就绪 · ${phys}`;
+    // 状态行只说"能不能用"：帧率、物理这些在这里都是噪音（真要查看下面每 15 秒那行日志）
+    ui.panelStatus.textContent = "模型就绪";
     if (panelSelfCheck !== "ready") {
       panelSelfCheck = "ready";
       logToShell("Live2D 面板就绪：" + JSON.stringify({
@@ -520,12 +520,24 @@ function closeOverlay() {
   ui.overlay.innerHTML = "";
 }
 
+/* 滚动条按需显示：平静的时候右边不挂那一条，真的滑过之后留 700ms 再收回去（方便去抓滑块）。
+   配合的样式在 style.css 的 .messages / .sheet 里，类名统一叫 .is-scrolling。 */
+const scrollIdleTimers = new WeakMap();
+function markScrolling(el) {
+  el.addEventListener("scroll", () => {
+    el.classList.add("is-scrolling");
+    clearTimeout(scrollIdleTimers.get(el));
+    scrollIdleTimers.set(el, setTimeout(() => el.classList.remove("is-scrolling"), 700));
+  }, { passive: true });
+}
+
 function showSheet(build) {
   ui.overlay.innerHTML = "";
   const sheet = document.createElement("div");
   sheet.className = "sheet";
   ui.overlay.appendChild(sheet);
   ui.overlay.classList.remove("hidden");
+  markScrolling(sheet);
   build(sheet);
 }
 
@@ -789,26 +801,6 @@ function openSettings() {
     }
     sheet.appendChild(list);
 
-    // 物理开关（帧率的取舍：开≈36fps，关≈60fps）
-    const physics = state.cfg?.live2d_physics !== false;
-    const row = document.createElement("div");
-    row.className = "pref";
-    row.innerHTML = `
-      <div class="pref-main"><div class="label">角色物理（头发、衣摆）</div></div>
-      <button class="switch ${physics ? "on" : ""}" data-act="physics" role="switch"
-              aria-checked="${physics}" aria-label="角色物理"></button>`;
-    const sw = row.querySelector(".switch");
-    sw.onclick = async () => {
-      const next = !sw.classList.contains("on");
-      sw.classList.toggle("on", next);
-      sw.setAttribute("aria-checked", String(next));
-      await api("/api/config", { method: "POST", body: { live2d_physics: next } });
-      state.cfg.live2d_physics = next;
-      try { petWindow()?.yachiyo?.setPhysics(next); } catch { /* 页面没就绪就算了 */ }
-      setStatus(`物理已${next ? "打开" : "关闭"}`);
-    };
-    who.appendChild(row);          // 物理开关跟"角色"是一件事，放同一栏里
-
     // 温度
     const temp = document.createElement("div");
     temp.className = "sect";
@@ -931,6 +923,8 @@ ui.input.addEventListener("keydown", (event) => {
     sendMessage();
   }
 });
+// 滚动条只在真的在滑动时露出来：平静的时候别在右边挂一条（样式见 style.css）
+markScrolling(ui.messages);
 ui.overlay.addEventListener("click", (event) => {
   if (event.target === ui.overlay && !state.cfg?.active_provider) closeOverlay();
 });

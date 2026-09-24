@@ -99,12 +99,16 @@ def test_setup_sheet_says_where_the_key_goes() -> None:
     assert "不经过" in app
 
 
-def test_physics_switch_is_discoverable_by_assistive_tech() -> None:
-    """物理开关是个真按钮，得能被脚本/读屏认出来（当初 UI 自动化就卡在这）。"""
+def test_physics_switch_is_gone_from_settings() -> None:
+    """物理开关已经撤掉：关掉物理角色会僵在那儿，用户反馈太怪。
+
+    它当初是界面上唯一一个 role="switch" 的控件，顺手守住 —— 别再溜回来。
+    真要省帧率就走 pet.html 的 ?physics=0（调试/自动化口子），不该出现在界面上。
+    """
     app = _text(APP_JS)
-    assert 'data-act="physics"' in app
-    assert 'role="switch"' in app
-    assert "aria-checked" in app
+    assert 'data-act="physics"' not in app
+    assert "live2d_physics" not in app
+    assert "角色物理" not in app
 
 
 def test_live2d_panel_is_an_iframe_of_our_own_origin() -> None:

@@ -5,15 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>八千代 · Live2D</title>
 <style>
-  /* 背景必须透明：这一页的画面会被贴到界面的深色面板上。
+  /* 背景必须透明：这一页的画面会被贴到界面的玻璃面板上。
      只要这里出现任何不透明底色，看到的就是一块方块。 */
-  /* ★★ color-scheme 是这一页的"底色开关"，不是配色 —— 这一行修的是"角色面板是白底"。
-     实测（Electron 44 / Chromium 152）：Chromium 给每个 iframe 铺一层不透明底色，
-     默认是白的，模型画得再透明也盖不住它。同一块面板刷成洋红做的对照：
-       color-scheme: dark  → 这层底色是**透明**的，洋红/玻璃/光晕原样透上来 ✓
-       color-scheme: light → 这层底色是不透明的近白 rgb(253,254,255)
-     所以深色主题必须给 dark（透明），浅色主题给 light（浅色面板本来也是这个白）。
-     默认深色：JS 还没跑起来时也不能闪白。切主题见 __yachiyo.setTheme()。 */
+  /* ★★ Chromium 给每个 iframe 铺的"底色"（canvas 基色）由两件事决定，
+     实测环境：Electron 44 / Chromium 152，工具 scratch/pet_bg.py、scratch/pet_transp*.py：
+
+       | 状态                                                   | 面板上看到的               |
+       |--------------------------------------------------------|----------------------------|
+       | 祖先元素 color-scheme: dark + 本页根背景 transparent    | 面板玻璃原样透上来 ✓（深浅主题都一样）|
+       | 祖先元素 color-scheme: light（浅色主题默认）            | 不透明深块 #121212 ✗        |
+       | 本页声明 color-scheme: light / normal                   | 不透明近白 rgb(253,254,255) |
+       | 本页根元素 background-color 设成洋红                    | 整块洋红 ✓（根背景=canvas 基色）|
+
+     结论：**祖先的 color-scheme 才是开关**，它在 desktop/renderer/style.css 的 `.stage` 上被钉成
+     dark（浅色主题下照样），所以这一页保持"什么都不画"。父页面传 ?theme= 只是记进
+     state.theme / data-theme 供排查，这一页不按主题换底色 —— 换过就变成一块和聊天卡片
+     不一样的方块（曾经踩过两次：纯白、以及 #121212 深块）。
+     万一哪天祖先的 color-scheme 又变回 light，本页 root 自己画 background 也能救
+     （见上面最后一行：根背景直接就是 canvas 基色）。 */
   :root { color-scheme: dark; }
   html, body {
     margin: 0; padding: 0; width: 100%; height: 100%;
@@ -63,7 +72,7 @@
     externalDrive: false, // 帧是不是由外部（Python）驱动
     modelAutoUpdate: null, // 模型的自动更新（挂在全局共享 ticker 上）有没有关掉
     tickerAlive: null,
-    theme: null,           // 当前 color-scheme（dark/light）—— iframe 底色开关，见 <style>
+    theme: null,           // 当前主题（dark/light），只作诊断 —— 底色透明与否由祖先 color-scheme 决定
     physics: null,         // 物理（头发/衣摆）在不在跑：false 换帧率
     deps: {},
   };
@@ -82,14 +91,14 @@
       state.error = String(message);
       window.__yachiyo.say("失败：" + state.error);
     },
-    /* 主题 → 这一页的 color-scheme。★ 这不是"配色"，是 <style> 里写的那个底色开关：
-       dark = iframe 底色透明（面板的玻璃和光晕透上来），light = 底色不透明的近白。
-       父页面用 ?theme= 传主题，切换主题时再调 window.yachiyo.setTheme()。 */
+    /* 主题只记进 state.theme / data-theme 供排查。★ 这一页两个主题下都保持透明：
+       底色那块由**祖先元素的 color-scheme** 决定，已在 style.css 的 `.stage` 上钉成 dark，
+       详见 <style> 里的表。父页面用 ?theme= 传主题，切换主题时再调这里。 */
     setTheme(name) {
-      const scheme = name === "light" ? "light" : "dark";
-      document.documentElement.style.colorScheme = scheme;
-      state.theme = scheme;
-      return scheme;
+      const asked = name === "light" ? "light" : "dark";
+      state.theme = asked;
+      document.documentElement.dataset.theme = asked;
+      return asked;
     },
   };
 
@@ -326,9 +335,9 @@ function patchTextureGpuData(m) {
 
 async function start() {
   const params = new URLSearchParams(location.search);
-  // 主题：只用来定这一页的 color-scheme（iframe 底色开关），见 <style> 里的长注释
+  // 主题：只记进 state.theme 供排查；这一页的底色透明与否由祖先 color-scheme 决定，见 <style>
   say("主题：" + (params.get("theme") || "未传")
-      + " → color-scheme=" + Y.setTheme(params.get("theme")));
+      + " → 本页恒透明，state.theme=" + Y.setTheme(params.get("theme")));
   const modelUrl = params.get("model");
   if (!modelUrl) {
     return Y.fail("缺少 ?model= 参数");

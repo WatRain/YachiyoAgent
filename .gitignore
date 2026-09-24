@@ -55,3 +55,6 @@ packaging/tiktoken_cache/
 node_modules/
 desktop/.logs/
 desktop/release/
+
+# 本地双击启动器（用工作区代码开窗口，个人方便用，不是产品的一部分）
+启动.cmd

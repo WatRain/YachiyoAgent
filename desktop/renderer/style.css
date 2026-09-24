@@ -64,6 +64,7 @@
          linear-gradient(163deg, #0A0C12 0%, #10131C 46%, #0B0E16 100%);
   --moon-face: radial-gradient(circle at 34% 32%, #FDFCF4 0%, #E4E8F1 52%, #B3BCCF 100%);
   --moon-glow: 0 0 120px 28px rgba(214, 226, 255, .17);
+  --moon-opacity: .92;
   --aurora-a: radial-gradient(62% 42% at 20% 16%, rgba(127, 178, 255, .17), transparent 72%);
   --aurora-b: radial-gradient(56% 40% at 80% 60%, rgba(233, 200, 142, .15), transparent 74%);
   --stars-opacity: .5;
@@ -121,7 +122,7 @@
   --ok: #0E8A63;
   --warn: #A5680A;
 
-  --glass-fill: linear-gradient(155deg, rgba(255, 255, 255, .74), rgba(255, 255, 255, .48));
+  --glass-fill: linear-gradient(155deg, rgba(255, 255, 255, .52), rgba(255, 255, 255, .32));
   --glass-fill-solid: rgba(255, 255, 255, .82);
   --glass-border: rgba(255, 255, 255, .85);
   --glass-border-hi: rgba(255, 255, 255, .95);
@@ -146,15 +147,26 @@
   --bubble-user-text: #2A1F0B;
   --code-bg: rgba(23, 38, 74, .08);
 
-  --sky: radial-gradient(1100px 720px at 82% 4%, rgba(255, 255, 255, .95), transparent 60%),
-         radial-gradient(900px 700px at 6% 98%, rgba(214, 230, 255, .9), transparent 62%),
-         linear-gradient(163deg, #F7F9FE 0%, #E7EDF9 52%, #EFF1F8 100%);
+  /* ★ 浅色主题的“白”要克制（用户反馈：“浅色界面下的模型的背景还是太白了”）。
+     实测根因（.ptmp/backdrop-light.png，把面板和聊天卡的背景都设成 transparent 后直接采背景）：
+       角色面板后面 (560-920, y60-84) ≈ rgb(247,249,252)，聊天卡片后面 (20-500, y47-66) ≈ rgb(228,235,250)
+     —— 左边被 --aurora-a 的蓝罩住，右边被右上角那团白光罩住，而角色面板恰好在右半边，所以白一档。
+     四个白源一起收（深色主题一个令牌都没动）：
+       1) 右上角白光改成冷色 .42 → rgba(203,222,255,.58)，右边不再是白纸而是月光；
+       2) 底色渐变整体降一档：#F7F9FE → #EEF3FC；
+       3) 月盘不透明度 .92 → .42（--moon-opacity，纯白盘面透过毛玻璃就是一团死白）；
+       4) 玻璃白 fill .74/.48 → .52/.32。
+     角色身后的 --halo 反而调亮一档（.14 → .20），让那块地方是“月光”而不是“白纸”。 */
+  --sky: radial-gradient(1100px 720px at 82% 4%, rgba(203, 222, 255, .58), transparent 60%),
+         radial-gradient(900px 700px at 6% 98%, rgba(203, 224, 255, .85), transparent 62%),
+         linear-gradient(163deg, #EEF3FC 0%, #E3EAF8 52%, #E8EDF8 100%);
   --moon-face: radial-gradient(circle at 34% 32%, #FFFFFF 0%, #EDF1F8 55%, #D5DCEA 100%);
-  --moon-glow: 0 0 120px 30px rgba(255, 255, 255, .8);
+  --moon-glow: 0 0 110px 24px rgba(226, 236, 255, .42);
+  --moon-opacity: .42;
   --aurora-a: radial-gradient(62% 42% at 20% 10%, rgba(44, 107, 230, .15), transparent 72%);
   --aurora-b: radial-gradient(56% 40% at 80% 60%, rgba(154, 107, 30, .12), transparent 74%);
   --stars-opacity: .16;
-  --halo: rgba(44, 107, 230, .14);
+  --halo: rgba(44, 107, 230, .20);
   --grain-opacity: .03;
 }
 
@@ -219,7 +231,8 @@ body {
 .backdrop .aurora-a { background: var(--aurora-a); }
 .backdrop .aurora-b { background: var(--aurora-b); }
 
-/* 月盘：右上角，慢慢"呼吸"（亮度与光晕） */
+/* 月盘：右上角，慢慢"呼吸"（亮度与光晕）。光晕/不透明度都是主题令牌：
+   浅色下必须收着（.42），否则纯白盘面透过角色面板的毛玻璃就是一团死白。 */
 .backdrop .moon {
   position: absolute;
   top: -90px;
@@ -229,7 +242,7 @@ body {
   border-radius: 50%;
   background: var(--moon-face);
   box-shadow: var(--moon-glow);
-  opacity: .92;
+  opacity: var(--moon-opacity);
 }
 /* 月面上的暗斑（环形山），用两层柔和的径向渐变假装 */
 .backdrop .moon::after {
@@ -505,16 +518,14 @@ body {
   flex-direction: column;
   gap: var(--gap-md);
   padding: var(--gap-xs) 4px var(--gap-xs) 0;
+  /* 不滑动的时候右边不挂那条滚动条：静止时滑块颜色给全透明，真的在滑（app.js 加的
+     .is-scrolling）才画出来。故意不跟 :hover 联动 —— 鼠标停在对话里读字时就又挂一条了。
+     注意：这里不能用 ::-webkit-scrollbar-* —— 标准属性 scrollbar-color/scrollbar-width
+     一旦设了非初始值，Chromium 就整块忽略那套伪元素，没法按状态切换。 */
   scrollbar-width: thin;
-  scrollbar-color: var(--track) transparent;
+  scrollbar-color: transparent transparent;
 }
-.messages::-webkit-scrollbar { width: 8px; }
-.messages::-webkit-scrollbar-track { background: transparent; }
-.messages::-webkit-scrollbar-thumb {
-  background: var(--track);
-  border-radius: var(--r-pill);
-}
-.messages::-webkit-scrollbar-thumb:hover { background: var(--glass-border-hi); }
+.messages.is-scrolling { scrollbar-color: var(--track) transparent; }
 
 .bubble {
   max-width: 84%;
@@ -603,7 +614,10 @@ body {
 .input-shell {
   flex: none;
   display: flex;
-  align-items: flex-end;
+  /* 居中对齐，不是 flex-end：文字自己有 11px 的上下内边距，按钮要是贴着盒子底边排，
+     中线会比第一行文字的中线低 3px 左右（实测按钮中线 746、文字中线 743），看着就是"按钮偏下"。
+     居中之后两者中线重合，输入框长高时按钮也一直待在中间。 */
+  align-items: center;
   gap: var(--gap-sm);
   padding: var(--gap-xs) var(--gap-sm) var(--gap-xs) var(--gap-md);
   border-radius: var(--r-lg);
@@ -681,7 +695,17 @@ body {
   justify-content: center;
   gap: var(--gap-sm);
 }
+/* ★★ 这一行是"角色面板的底色"开关，不要删。理由（真机实测，Electron 44 / Chromium 152）：
+   Chromium 会给每个 iframe 铺一层底色，铺什么由 **iframe 祖先元素的 color-scheme** 决定 ——
+   浅色主题下根元素是 `color-scheme: light`，那层底就是不透明的深块 #121212（或近白），
+   角色页自己声明 transparent 也盖不住它，于是面板上就是一块和聊天卡片不一样的方块。
+   把 color-scheme 在角色这一支改回 dark，那层底就变成**透明**的，面板自己的玻璃（和聊天卡片
+   同一套 .glass）原样透上来 —— 深浅两个主题都一样。
+   对照实验（scratch/pet_transp4.py，把面板刷洋红）：不给 dark 时面板三点是 (18,18,18) 洋红 0/3；
+   `.stage` 上加 dark 后三点是 (255,100,255)(255,47,255)(255,0,255) 洋红 2/3 ✓。
+   color-scheme 可继承，所以放在 .stage 上只影响角色这一支，页面其余部分仍是浅色 UA 外观。 */
 .stage {
+  color-scheme: dark;
   position: relative;
   flex: 1;
   min-height: 0;
@@ -768,16 +792,16 @@ body {
   box-shadow: var(--glass-rim), var(--shadow-lg);
   backdrop-filter: blur(30px) saturate(170%);
   -webkit-backdrop-filter: blur(30px) saturate(170%);
+  /* 同 .messages：不滑动时不显示滚动条（标准属性一设，::-webkit-scrollbar-* 就整块失效） */
   scrollbar-width: thin;
-  scrollbar-color: var(--track) transparent;
+  scrollbar-color: transparent transparent;
   animation: sheet-in var(--slow) var(--spring);
 }
 @keyframes sheet-in {
   from { opacity: 0; transform: translateY(18px) scale(.965); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
-.sheet::-webkit-scrollbar { width: 8px; }
-.sheet::-webkit-scrollbar-thumb { background: var(--track); border-radius: var(--r-pill); }
+.sheet.is-scrolling { scrollbar-color: var(--track) transparent; }
 
 .sheet-head { display: flex; align-items: center; gap: var(--gap-md); }
 .sheet-head .mark {
@@ -861,7 +885,106 @@ body {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow: var(--glass-rim), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 }
-.field select option { background: var(--bg-1); color: var(--text); }
+/* ── 下拉列表：用页面自己的玻璃层，别让系统菜单出戏 ──
+   Chromium 的可定制 select（appearance: base-select）：<select> 元素、id、option 全部保留
+   （键盘操作、无障碍、#p-proto option 这些契约都在），只换掉外壳和弹出层 ——
+   默认那层是系统灰白菜单，跟这里的玻璃语言完全不搭。
+   ::picker(select) 渲染在 top layer：不会被 .sheet 的 overflow 裁掉，backdrop-filter 在这里也生效。 */
+select, ::picker(select) { appearance: base-select; }
+
+.field select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  cursor: pointer;
+}
+/* 模型 ID 很长，收起的按钮里只留一行，放不下就省略号 */
+.field select selectedcontent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.field select::picker-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-3);
+  transition: rotate var(--normal) var(--ease), color var(--fast) var(--ease);
+}
+.field select:hover::picker-icon { color: var(--text-2); }
+.field select:open::picker-icon { rotate: 180deg; }
+.field select:open {
+  background: var(--field-bg-focus);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: var(--glass-rim), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+::picker(select) {
+  margin: 6px 0 0;
+  padding: 6px;
+  border: 1px solid var(--glass-border-hi);
+  border-radius: var(--r-md);
+  background: var(--glass-fill-solid);
+  box-shadow: var(--glass-rim), var(--shadow-lg);
+  backdrop-filter: blur(30px) saturate(170%);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  max-height: 268px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--track) transparent;
+  /* 开合动画：display / overlay 是离散属性，得 allow-discrete 才参与过渡 */
+  opacity: 0;
+  transform: translateY(-6px) scale(.98);
+  transition: opacity var(--fast) var(--ease),
+              transform var(--normal) var(--spring),
+              display var(--normal) allow-discrete,
+              overlay var(--normal) allow-discrete;
+}
+select:open::picker(select) { opacity: 1; transform: none; }
+@starting-style { select:open::picker(select) { opacity: 0; transform: translateY(-6px) scale(.98); } }
+
+/* 选项：option 在 light DOM 里，直接选它就行（写成 ::picker(select) option 匹配不到，
+   实测那样整条规则会被丢掉，行高会退回 UA 的 24px） */
+.field select option {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 9px 12px;
+  /* 行与行之间留一点缝：两块高亮挨在一起会黏成一坨（尤其是紧贴选中行的那一行） */
+  margin-block: 2px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  letter-spacing: .01em;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+/* 悬停反馈：不能用 --seg-on（浅色主题里它是 rgba(255,255,255,.95)，压在 82% 白的弹出层上
+   等于没变化，实测那一行 rgb(254,254,255) → rgb(255,255,255)）；也不用 --text 混出来的纯灰
+   —— 浅色下那块灰看着像一块阴影，跟旁边的选中行粘在一起。改用强调色调，比选中态轻一档。 */
+.field select option:hover,
+.field select option:focus-visible {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  outline: none;
+}
+.field select option:checked { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+/* 鼠标停在「自己选中的那一行」上也必须有变化：:checked 写在 :hover 后面会把它盖掉 */
+.field select option:checked:hover {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.field select option::checkmark {
+  order: 1;
+  margin-left: auto;
+  padding-left: var(--gap-sm);
+  content: "✓";
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+}
 .field input[type="range"] {
   padding: 0;
   height: 26px;
