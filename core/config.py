@@ -60,6 +60,10 @@ class AppConfig(BaseModel):
     # 但界面上已经不提供这个开关了 —— 关掉之后角色会僵在那儿，用户说太怪。
     # 字段留着是为了兼容老配置，主界面不再读它；调试要关物理走 pet.html 的 ?physics=0。
     live2d_physics: bool = True
+    # 角色是不是脱离在桌面浮窗里（面板右侧那一格会收起）。
+    # 只是"上次住在哪儿"的偏好：真正的窗口位置/大小存在 Electron 的 userData
+    # （desktop/main.js 的 pet-window.json），那属于界面状态，不进这里。
+    live2d_detached: bool = False
 
 
 def _migrate(raw: dict) -> AppConfig:

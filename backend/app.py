@@ -61,6 +61,7 @@ EDITABLE_CONFIG_FIELDS = {
     "temperature",
     "theme",
     "live2d_physics",
+    "live2d_detached",
 }
 
 PROVIDER_FIELDS = (

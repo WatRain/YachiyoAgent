@@ -28,6 +28,7 @@ const state = {
   busy: false,
   toolTask: null,
   themeMode: "dark",        // system / light / dark，与后端 config.theme 同步
+  petDetached: false,       // 角色是不是已经脱离到桌面浮窗（与 config.live2d_detached 同步）
 };
 
 const STAGE_WIDTH = 380;
@@ -70,8 +71,8 @@ function applyTheme(mode, { persist = false } = {}) {
   const resolved = resolveTheme(want);
   state.themeMode = want;
   document.documentElement.dataset.theme = resolved;
-  // 角色页也要跟着换：它靠 color-scheme 决定 iframe 底色是透明（深色）还是近白（浅色）
-  try { petWindow()?.yachiyo?.setTheme?.(resolved); } catch { /* 页面还没就绪就算了 */ }
+  // 角色页也要跟着换（浮窗里那份走 IPC，见 petCall）。它靠 color-scheme 决定底色透明还是近白
+  petCall("setTheme", [resolved]);
   throttlePetDuringTheme();
 
   // 标题栏的快捷开关 + 设置里的三选一，都是 data-theme-set，一起对齐
@@ -394,6 +395,116 @@ function petWindow() {
   try { return ui.pet.contentWindow; } catch { return null; }
 }
 
+/* ── 角色目标：面板里的 iframe，还是桌面上的浮窗 ──
+ *
+ * 角色只有一份，但可能住在两个地方：
+ *   · 默认 —— 右侧面板里的 iframe，可以直接 contentWindow.yachiyo 调；
+ *   · 脱离后 —— 桌面上的浮窗（另一个 BrowserWindow），只能让主进程转发。
+ * 上层（口型 / 主题 / 帧率 / 统计）一律只认下面这几个函数，别到处判断。
+ */
+function petCall(name, args = []) {
+  if (state.petDetached) {
+    try { window.yachiyoShell?.petCmd?.(name, args); } catch { /* 主进程没了也无所谓 */ }
+    return null;                  // 单向：浮窗那边的返回值不往回带
+  }
+  const win = petWindow();
+  const fn = win && win.yachiyo && win.yachiyo[name];
+  if (typeof fn !== "function") return null;
+  try { return fn.apply(win.yachiyo, args); } catch { return null; }
+}
+
+/** 角色页的状态快照。脱离之后得问浮窗（异步）。 */
+async function petSnapshot() {
+  if (state.petDetached) {
+    try { return await window.yachiyoShell.petState(); } catch { return null; }
+  }
+  const win = petWindow();
+  if (!win || !win.yachiyo) return null;
+  try { return win.yachiyo.state(); } catch { return null; }
+}
+
+/** 角色页地址。standalone=true 时带 ?window=1 —— 那一页会按"独立窗口"工作
+ *  （自己拖动、右键弹原生菜单、接主进程转发的指令），见 pet.html 末尾那段脚本。 */
+function petPageUrl(standalone) {
+  const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+  const base = state.apiBase.replace(/\/$/, "") + state.live2d.page;
+  const query = `?model=${encodeURIComponent(state.live2d.model)}&theme=${theme}`;
+  return standalone ? `${base}${query}&window=1` : `${base}${query}`;
+}
+
+/* 这一行的说明文字有两份（模板里一份、切换时一份），写成常量免得两边说不一样的话。 */
+const PET_DETACH_DESC_ON = "现在在桌面上：按住她可以拖动，右键可以收回或改置顶";
+const PET_DETACH_DESC_OFF = "让八千代从右侧面板里出来，变成桌面上一个可以拖动的透明窗口";
+
+/* 切换"角色住哪儿"。三件事必须一起做：界面状态、面板里的 iframe、后端配置。
+ *
+ * 面板里的 iframe 在脱离时要卸掉（src=about:blank）：两个窗口各跑一份模型
+ * 是白烧 GPU（一份就已经把主线程吃到 99%）。收回来时按当前主题重新装一次。 */
+function setPetDetached(flag, why) {
+  if (state.petDetached === flag) return;
+  state.petDetached = flag;
+  document.body.classList.toggle("pet-detached", flag);
+  if (flag) {
+    try { ui.pet.src = "about:blank"; } catch { /* 忽略 */ }
+  } else if (state.live2d && state.live2d.ready) {
+    ui.pet.src = petPageUrl(false);
+  }
+  const toggle = $("pet-detach");
+  if (toggle) {
+    toggle.classList.toggle("on", flag);
+    toggle.setAttribute("aria-checked", String(flag));
+  }
+  // 设置浮层正开着的时候也要跟着改（浮窗可能被右键菜单关掉，那时开关还亮着）
+  const desc = $("pet-detach-desc");
+  if (desc) desc.textContent = flag ? PET_DETACH_DESC_ON : PET_DETACH_DESC_OFF;
+  logToShell(`角色位置：${flag ? "桌面浮窗" : "右侧面板"}（${why}）`);
+  // 只有真的和配置不一样才写一次，免得每次启动都回写。
+  // 本地这份 cfg 也要跟着改：不然"脱离→收回"里收回那次判断出"没变化"，后端就一直留着 true。
+  if (Boolean(state.cfg?.live2d_detached) !== flag) {
+    if (state.cfg) state.cfg.live2d_detached = flag;
+    api("/api/config", { method: "POST", body: { live2d_detached: flag } }).catch(() => {
+      /* 存不下来只是下次启动回到面板，不值得打扰用户；把本地缓存拨回去免得一直骗自己 */
+      if (state.cfg) state.cfg.live2d_detached = !flag;
+    });
+  }
+}
+
+async function detachPet(opts = {}) {
+  if (state.petDetached) return true;
+  if (!state.live2d || !state.live2d.ready) {
+    if (!opts.quiet) setStatus("还没有可用的角色，先修好 Live2D 再说", true);
+    return false;
+  }
+  if (!window.yachiyoShell?.petDetach) {
+    if (!opts.quiet) setStatus("这个版本的主进程不支持脱离窗口", true);
+    return false;
+  }
+  let res = null;
+  try {
+    res = await window.yachiyoShell.petDetach({ url: petPageUrl(true) });
+  } catch (err) {
+    res = { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (!res || !res.ok) {
+    if (!opts.quiet) setStatus(`脱离失败：${(res && res.error) || "未知原因"}`, true);
+    // 启动恢复失败：面板里那份刚才被 bootPanel 跳过了，补装回去，
+    // 别把界面留在"面板空着、浮窗也没有"的状态。
+    else if (state.live2d && state.live2d.ready) ui.pet.src = petPageUrl(false);
+    return false;
+  }
+  setPetDetached(true, "脱离到桌面");
+  if (!opts.quiet) setStatus("八千代到桌面上了，按住她可以拖，右键她可以收回");
+  return true;
+}
+
+async function dockPet(opts = {}) {
+  if (!state.petDetached) return true;
+  try { await window.yachiyoShell?.petDock?.(); } catch { /* 已经关了也一样 */ }
+  setPetDetached(false, opts.why || "收回面板");
+  if (!opts.quiet) setStatus("八千代回到面板里了");
+  return true;
+}
+
 /* 切主题时给角色页降载。
  *
  * 实测（CDP Performance 域）：静置 1.5 秒里 TaskDuration=1.511s、ScriptDuration=
@@ -411,20 +522,18 @@ const PET_THROTTLE_MS = 800;
 let petThrottleTimer = 0;
 
 function throttlePetDuringTheme() {
-  const api = petWindow()?.yachiyo;
-  if (!api || typeof api.setFrameCap !== "function") return;   // 角色页还没就绪就算了
   clearTimeout(petThrottleTimer);
-  try { api.setFrameCap(PET_FPS_DURING_THEME); } catch { return; }
+  // 脱离状态下 petCall 是单向的（返回 null 但指令确实发出去了），不能拿返回值当"没就绪"
+  const throttled = petCall("setFrameCap", [PET_FPS_DURING_THEME]);
+  if (throttled === null && !state.petDetached) return;   // 面板里的角色页还没就绪：这次降载就算了
   petThrottleTimer = setTimeout(() => {
-    try { petWindow()?.yachiyo?.setFrameCap?.(PET_FPS_CAP); } catch { /* 忽略 */ }
+    petCall("setFrameCap", [PET_FPS_CAP]);
   }, PET_THROTTLE_MS);
 }
 
 function pulseMouth() {
-  const win = petWindow();
-  if (!win || !win.yachiyo) return;
   const value = 0.25 + Math.random() * 0.65;   // 说话时的口型（没有真实音频，先按节奏开合）
-  try { win.yachiyo.setMouth(value); } catch { /* 角色出问题不该影响聊天 */ }
+  petCall("setMouth", [value]);
 }
 
 /** 视线：主进程每 33ms 推一次鼠标的屏幕坐标，这里换算成画面坐标。
@@ -446,12 +555,16 @@ function watchGaze() {
 
   if (!window.yachiyoShell || !window.yachiyoShell.onCursor) return;
   window.yachiyoShell.onCursor((point) => {
+    // 脱离之后主进程不再往这边发 cursor（它直接驱动浮窗），这条只是保险
+    if (state.petDetached) return;
     const win = petWindow();
     if (!win || !win.yachiyo) return;
     // 画面坐标 = 指针相对 iframe 左上角的位置。iframe 的 CSS 尺寸就是页面里的
     // 像素尺寸（两者都是 DIP），所以不用换算比例；窗口被拖动过就重新校准。
     const x = Math.round(point.x - rect.left);
     const y = Math.round(point.y - rect.top);
+    // 面板里不扩范围：指针一离开画面就回正前方。
+    // （外扩 GAZE_PAD 只给脱离后的浮窗，见 desktop/main.js 的 cursorLoop）
     const inside = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
     const key = inside ? `${x},${y}` : "out";
     if (key !== last) {
@@ -490,10 +603,10 @@ function bootPanel() {
   // pet.html 仍然认 ?physics=0，那是留给调试/自动化的口子，不在界面上出现。
   // 主题必须传：角色页靠 color-scheme 决定 iframe 的底色是透明还是近白（见 pet.html 里的注释），
   // 不传的话深色主题下面板里就是一块白。
-  const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  const url = state.apiBase.replace(/\/$/, "") + state.live2d.page
-    + `?model=${encodeURIComponent(state.live2d.model)}&theme=${theme}`;
-  ui.pet.src = url;
+  // 脱离状态下这一格是空的（模型在浮窗里），boot() 末尾会把浮窗开起来。
+  // 配置里写着"上次是脱离的"也跳过：boot() 是先 bootPanel 再恢复浮窗的，
+  // 不跳过就会先把模型在面板里加载一遍、再扔掉（多烧 2 秒 GPU，还可能闪一下）。
+  if (!state.petDetached && !state.cfg?.live2d_detached) ui.pet.src = petPageUrl(false);
   watchGaze();
   pollPanel();
 }
@@ -533,10 +646,12 @@ function setPanelStatus(text, { flash = false } = {}) {
 }
 
 async function pollPanel() {
-  const win = petWindow();
-  const info = win && win.yachiyo ? (() => { try { return win.yachiyo.state(); } catch { return null; } })() : null;
+  const info = await petSnapshot();
 
   if (!info) {
+    // 掉回"没就绪"要把那一次的印记清掉：收回面板时 iframe 会重载，这一下必然
+    // 读到 null；不清的话"模型就绪"只报过一次，之后状态药丸就永远停在"正在唤醒"了。
+    panelSelfCheck = "";
     setPanelStatus("正在唤醒八千代…");
   } else if (info.error) {
     setPanelStatus(`角色加载失败：${info.error}`);
@@ -545,6 +660,7 @@ async function pollPanel() {
       logToShell("Live2D 面板出错：" + info.error, "stage=" + info.stage, "diag=" + JSON.stringify(info.diag || []));
     }
   } else if (!info.ready) {
+    panelSelfCheck = "";          // 同上：还没就绪不算报过
     setPanelStatus("正在唤醒八千代…");
   } else {
     const now = performance.now();
@@ -872,7 +988,75 @@ function openSettings() {
             ? "Live2D 模型，版权归模型作者"
             : "没有找到模型 —— 往 models/ 里放一个"}</div>
         </div>
+      </div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">脱离到桌面</div>
+          <div class="desc" id="pet-detach-desc">${state.petDetached
+            ? PET_DETACH_DESC_ON : PET_DETACH_DESC_OFF}</div>
+        </div>
+        <div class="switch ${state.petDetached ? "on" : ""}" id="pet-detach" role="switch"
+             aria-checked="${state.petDetached}" aria-label="脱离到桌面" tabindex="0"></div>
+      </div>
+      <div class="field">
+        <label>浮窗大小</label>
+        <input type="range" id="pet-size" min="50" max="200" step="5" value="100" />
+        <div class="hint" id="pet-size-value">—</div>
       </div>`;
+    const detachToggle = who.querySelector("#pet-detach");
+    // 开关的视觉同步（.on / aria-checked / 说明文字）全在 setPetDetached 里做 ——
+    // 浮窗被右键菜单关掉时走的也是那条路，放这儿会漏。
+    const flipDetach = async () => {
+      await (state.petDetached ? dockPet() : detachPet());
+    };
+    detachToggle.onclick = flipDetach;
+    detachToggle.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flipDetach(); }
+    };
+
+    /* 浮窗大小：滑块给的是"相对默认尺寸的百分比"，真正的像素尺寸由主进程算
+     * （长宽比锁死、中心不动、钳制在屏幕内），它返回的才算数 —— 按返回的刷回滑块，
+     * 这样拖到超出工作区时会诚实地弹回实际值。浮窗没开也能调：存盘，下次脱离生效。 */
+    const sizeInput = who.querySelector("#pet-size");
+    const sizeHint = who.querySelector("#pet-size-value");
+    const sizeBase = { width: 380, height: 680 };
+    const sizeText = (k) => `${Math.round(sizeBase.width * k)} × ${Math.round(sizeBase.height * k)}`;
+    sizeInput.oninput = () => { sizeHint.textContent = sizeText(Number(sizeInput.value) / 100); };
+    sizeInput.onchange = async () => {
+      let res = null;
+      try { res = await window.yachiyoShell?.petResize?.(Number(sizeInput.value) / 100); } catch { res = null; }
+      if (!res || !res.ok) { sizeHint.textContent = "改不了：主进程没响应"; return; }
+      // 滑块停在用户选的那一档；提示按主进程**实际**给的尺寸写（真被钳制时这里就是真话）
+      sizeHint.textContent = sizeText(res.bounds.width / sizeBase.width);
+    };
+    if (!(state.live2d && state.live2d.ready)) {
+      // 没有模型就没有浮窗可调，别摆一个拖不动的滑块
+      sizeInput.closest(".field").style.display = "none";
+    } else {
+      (async () => {
+        let info = null;
+        try { info = await window.yachiyoShell?.petSize?.(); } catch { info = null; }
+        if (!info || !info.ok) {
+          sizeInput.disabled = true;
+          sizeHint.textContent = "这个版本的主进程不支持调大小";
+          return;
+        }
+        sizeBase.width = info.base.width;
+        sizeBase.height = info.base.height;
+        /* 范围要**朝里取整到 step 的整数倍**：min=47 + step=5 这种组合下 100 不是合法档位，
+           浏览器会把 value 悄悄吸到 102，提示里的像素尺寸就跟着错
+           （实测 380×680 显示成 388×694）。取整之后每一档都合法，滑块和提示才对得上。 */
+        const step = Number(sizeInput.step) || 5;
+        const lo = Math.ceil((info.min * 100) / step) * step;
+        const hi = Math.floor((info.max * 100) / step) * step;
+        sizeInput.min = String(lo);
+        sizeInput.max = String(hi);
+        const raw = (info.bounds.width / info.base.width) * 100;
+        const pct = Math.min(hi, Math.max(lo, Math.round(raw / step) * step));
+        sizeInput.value = String(pct);
+        sizeHint.textContent = sizeText(pct / 100) + (info.open ? "" : "（脱离后按这个开）");
+      })();
+    }
     sheet.appendChild(who);
 
     // 当前用哪个 provider
@@ -987,6 +1171,8 @@ async function boot() {
   renderHistory(data.conversation);
   bootPanel();
   connectWs();
+  // 上次是"脱离到桌面"：把浮窗恢复出来（静默，别盖掉下面那句状态提示）
+  if (state.cfg?.live2d_detached) detachPet({ quiet: true });
 
   const active = state.providers.find((p) => p.id === data.active_provider);
   const ready = Boolean(active && data.active_has_key);
@@ -1007,6 +1193,11 @@ for (const btn of document.querySelectorAll("#theme-quick [data-theme-set]")) {
 $("btn-min").onclick = () => window.yachiyoShell.minimize();
 $("btn-close").onclick = () => window.yachiyoShell.close();
 $("btn-settings").onclick = openSettings;
+// 浮窗被关掉（右键菜单 / 主窗口关闭）→ 把开关和面板拨回来，状态栏也别再留着"她在桌面上"
+window.yachiyoShell?.onPetClosed?.(() => {
+  setPetDetached(false, "浮窗已关闭");
+  setStatus("八千代回到面板里了");
+});
 ui.send.onclick = sendMessage;
 ui.stop.onclick = stopMessage;
 ui.input.addEventListener("input", autoGrow);

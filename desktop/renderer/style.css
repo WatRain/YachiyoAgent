@@ -753,6 +753,10 @@ body {
 
 /* ───────────────────────── 角色面板 ───────────────────────── */
 
+/* 角色脱离到桌面浮窗时，右侧这一格整块收起（.body 是 flex，聊天区自动占满）。
+   不留下一个空面板：模型已经不在那儿了，留个空框只会让人以为界面坏了。 */
+body.pet-detached .panel { display: none; }
+
 .panel {
   flex: none;
   width: var(--panel-width);
