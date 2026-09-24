@@ -323,10 +323,21 @@ def create_app(*, token: str = "", state: BackendState | None = None,
 
     @app.post("/api/providers/models", dependencies=guard)
     async def provider_models(payload: dict) -> dict:
-        p = config_mod.get_provider(st.cfg, payload.get("provider_id") or None)
-        if p is None:
-            raise HTTPException(status_code=404, detail="找不到这个 provider")
-        api_key = (payload.get("api_key") or "").strip() or (await st.secrets.load(p.id)) or ""
+        """拉模型列表。和 /api/providers/test 一样，可以传 provider_id（已保存的），
+        也可以传一份临时 provider（引导页还没保存时用）。"""
+        api_key = (payload.get("api_key") or "").strip()
+        existing = {x.id for x in st.cfg.providers}
+
+        if payload.get("provider"):
+            p = _provider_from_payload(payload["provider"], existing_ids=list(existing))
+        else:
+            p = config_mod.get_provider(st.cfg, payload.get("provider_id") or None)
+            if p is None:
+                raise HTTPException(status_code=404, detail="找不到这个 provider")
+
+        # 同 /api/providers/test：只有已存过的 provider 才回落到已存的密钥
+        if not api_key and p.id in existing:
+            api_key = await st.secrets.load(p.id) or ""
         if not api_key:
             return {"models": None, "message": "还没有填 API Key。"}
         models = await list_models(p, api_key)

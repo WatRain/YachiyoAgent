@@ -291,6 +291,47 @@ def test_list_models_failure_is_not_an_error(client, monkeypatch):
     assert body["message"]
 
 
+def test_list_models_accepts_a_temporary_provider(client, monkeypatch):
+    """引导页在保存之前就要拉模型列表，所以这里得和 /api/providers/test 一样支持临时 provider。
+
+    只认 provider_id 的话，引导页（provider 还没写进配置）拿到的是 404「找不到这个 provider」。"""
+    calls = {}
+
+    async def fake_list(provider, api_key, *, timeout=15.0):
+        calls["id"] = provider.id
+        calls["key"] = api_key
+        return ["deepseek-chat", "deepseek-reasoner"]
+
+    monkeypatch.setattr("backend.app.list_models", fake_list)
+    resp = client.post(
+        "/api/providers/models",
+        json={"provider": _provider(id=""), "api_key": "sk-temp"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["models"] == ["deepseek-chat", "deepseek-reasoner"]
+    assert calls == {"id": "deepseek", "key": "sk-temp"}
+
+
+def test_list_models_never_borrows_a_saved_key(client, keyring, monkeypatch):
+    """同 /api/providers/test：临时 provider 没填 Key 时不能回落到同名的旧密钥。"""
+    called = []
+
+    async def fake_list(provider, api_key, *, timeout=15.0):
+        called.append(api_key)
+        return ["deepseek-chat"]
+
+    monkeypatch.setattr("backend.app.list_models", fake_list)
+    keyring.set("YachiyoAgent/apikey:deepseek", "sk-上一次留下的")
+
+    body = client.post(
+        "/api/providers/models",
+        json={"provider": _provider(id=""), "api_key": ""},
+    ).json()
+    assert body["models"] is None
+    assert "API Key" in body["message"]
+    assert called == []
+
+
 # ─────────────────────────── 配置 / 存储 ───────────────────────────
 
 
