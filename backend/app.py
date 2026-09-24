@@ -300,15 +300,19 @@ def create_app(*, token: str = "", state: BackendState | None = None,
         """测连接。可以传 provider_id（用已保存的配置和密钥），
         也可以传一份临时 provider + api_key（引导页还没保存时用）。"""
         api_key = (payload.get("api_key") or "").strip()
+        existing = {x.id for x in st.cfg.providers}
 
         if payload.get("provider"):
-            p = _provider_from_payload(payload["provider"], existing_ids=[x.id for x in st.cfg.providers])
+            p = _provider_from_payload(payload["provider"], existing_ids=list(existing))
         else:
             p = config_mod.get_provider(st.cfg, payload.get("provider_id") or None)
             if p is None:
                 raise HTTPException(status_code=404, detail="找不到这个 provider")
 
-        if not api_key:
+        # 只有测一个**已经存过**的 provider 才回落到已存的密钥。引导页 / 新建时传的是一份
+        # 临时 provider，它的 id 是按名字现推的（"DeepSeek" → "deepseek"），这里要是也回落，
+        # 凭据管理器里留着同名的旧密钥就会把"没填 Key"测成"连接成功"。
+        if not api_key and p.id in existing:
             api_key = await st.secrets.load(p.id) or ""
         if not api_key:
             return {"ok": False, "message": "还没有填 API Key。"}

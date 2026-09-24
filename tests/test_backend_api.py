@@ -255,6 +255,31 @@ def test_test_connection_without_key_says_so(client):
     assert "API Key" in resp.json()["message"]
 
 
+def test_temporary_provider_never_borrows_a_saved_key(client, keyring, monkeypatch):
+    """引导页传临时 provider 但没填 Key 时，绝不能回落到同名的已存密钥。
+
+    "DeepSeek" 现推出来的 id 正好是 "deepseek"；凭据管理器里要是还留着上一次的旧密钥，
+    回落就会把"没填 Key"测成"连接成功"（真机上踩到过）。"""
+    called = []
+
+    async def fake_test(provider, api_key, *, timeout=30.0):
+        called.append(api_key)
+        return True, "连接成功。"
+
+    monkeypatch.setattr("backend.app.test_connection", fake_test)
+    keyring.set("YachiyoAgent/apikey:deepseek", "sk-上一次留下的")   # 配置里没有它，密钥还在
+
+    resp = client.post("/api/providers/test", json={"provider": _provider(id=""), "api_key": ""})
+    assert resp.json() == {"ok": False, "message": "还没有填 API Key。"}
+    assert called == []          # 压根没发出去
+
+    # 同一个 id 只要**已经存进配置**，回落就是对的（设置页编辑已存的 provider 靠它）
+    client.post("/api/providers", json=_provider())
+    ok = client.post("/api/providers/test", json={"provider": _provider(), "api_key": ""})
+    assert ok.json()["ok"] is True
+    assert called == ["sk-上一次留下的"]
+
+
 def test_list_models_failure_is_not_an_error(client, monkeypatch):
     async def fake_list(provider, api_key, *, timeout=15.0):
         return None
