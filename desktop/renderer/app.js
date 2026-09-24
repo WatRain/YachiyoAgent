@@ -29,6 +29,7 @@ const state = {
   toolTask: null,
   themeMode: "dark",        // system / light / dark，与后端 config.theme 同步
   petDetached: false,       // 角色是不是已经脱离到桌面浮窗（与 config.live2d_detached 同步）
+  panelBooted: false,       // 角色面板是不是已经放过出来了（引导期间先扣着，见 ensurePanel）
 };
 
 const STAGE_WIDTH = 380;
@@ -758,8 +759,10 @@ const PROTOCOLS = [
   ["custom", "自定义"],
 ];
 
-/** provider 编辑表单（引导页和设置页共用）。 */
-function providerForm(sheet, { provider = null, onSaved }) {
+/** provider 编辑表单（引导页和设置页共用）。
+ *  actionsHost：动作行（测试连接 / 保存）挂到哪儿。默认留在表单里（设置页就这样）；
+ *  引导页传底部动作条进来，好让主按钮跟系统引导一样一直贴在卡片底部。 */
+function providerForm(sheet, { provider = null, onSaved, actionsHost = null }) {
   const form = document.createElement("div");
   form.className = "field-group";
   form.innerHTML = `
@@ -794,13 +797,19 @@ function providerForm(sheet, { provider = null, onSaved }) {
       <label>API Key${provider?.has_key ? "（已存，留空表示不改）" : ""}</label>
       <input id="p-key" type="password" placeholder="sk-..." autocomplete="off" />
     </div>
-    <div class="row">
-      <button class="btn" id="p-test" type="button">测试连接</button>
-      <button class="btn primary" id="p-save" type="button">保存</button>
-    </div>
     <div id="p-notice" class="notice"></div>
   `;
   sheet.appendChild(form);
+
+  // 动作行单独建，方便整行搬去别处（引导页的底部动作条）
+  const actions = document.createElement("div");
+  actions.className = "row form-actions";
+  actions.innerHTML = `
+    <button class="btn" id="p-test" type="button">测试连接</button>
+    <button class="btn primary" id="p-save" type="button">保存</button>
+  `;
+  if (actionsHost) actionsHost.appendChild(actions);
+  else form.insertBefore(actions, form.querySelector("#p-notice"));
 
   const notice = (text, kind = "") => {
     const node = form.querySelector("#p-notice");
@@ -865,7 +874,7 @@ function providerForm(sheet, { provider = null, onSaved }) {
     }
   };
 
-  form.querySelector("#p-test").onclick = async () => {
+  actions.querySelector("#p-test").onclick = async () => {
     const data = grab();
     if (!data.base_url || !data.model_id) { notice("先把接口地址和模型 ID 填上。", "bad"); return; }
     notice("正在测试…");
@@ -884,7 +893,7 @@ function providerForm(sheet, { provider = null, onSaved }) {
     }
   };
 
-  form.querySelector("#p-save").onclick = async () => {
+  actions.querySelector("#p-save").onclick = async () => {
     const data = grab();
     if (!data.base_url || !data.model_id || !data.display_name) {
       notice("名称、接口地址、模型 ID 都得填。", "bad");
@@ -1104,6 +1113,7 @@ function openSettings() {
       onSaved: async (id, extra) => {
         await reloadCore();
         closeOverlay();
+        ensurePanel();     // 引导被跳过 / 直接在这里配好的话，角色到这一步才放出来
         setStatus(extra?.persisted === false ? "已保存，但密钥只能用到本次退出（系统凭据库不可用）" : "设置已保存");
       },
     });
@@ -1127,16 +1137,84 @@ function openSettings() {
   });
 }
 
+/* ── 第一次运行引导（OOBE） ─────────────────────────────────────────────
+   照手机 / 电脑系统的开机引导搭：全屏玻璃卡、顶部品牌 + 步骤点、底部动作条、
+   左右滑动切页、正文分层错峰入场。三步 —— 欢迎 / 外观 / 连接。
+   三步的 DOM 一次全建好，靠 .is-active 交叉滑动（不用 display:none），
+   这样 #p-name 这些字段在哪一步都在，回上一步不用重建、探针也照样找得到。 */
+const SETUP_STEPS = ["欢迎", "外观", "连接"];
+const SETUP_THEMES = [
+  ["system", "跟随系统", "跟 Windows 的深色 / 浅色设置走"],
+  ["light", "浅色", "白天亮堂一点"],
+  ["dark", "深色", "夜里不刺眼"],
+];
+
+/** 把角色面板放出来。引导期间面板整个藏着（body.oobe），
+ *  用户配好服务、或者从引导里退出去再配好，都得走这里把它放出来。 */
+function ensurePanel() {
+  if (state.panelBooted) return;
+  if (!state.live2d || !state.live2d.ready) return;   // 模型不可用就别硬上
+  state.panelBooted = true;
+  document.body.classList.remove("oobe");
+  bootPanel();
+  if (state.cfg?.live2d_detached) detachPet({ quiet: true });
+}
+
 function openSetup() {
   showSheet(async (sheet) => {
     await reloadCore();
+    sheet.classList.add("setup");
     sheet.innerHTML = `
-      <div class="sheet-head"><div class="mark">月</div><h2>欢迎，先把八千代叫醒</h2></div>
-      <div class="hint">
-        填一个你自己的模型服务（任何 OpenAI 兼容的都行）。<br />
-        API Key 直接存进 ${state.secrets?.backend || "系统凭据管理器"}，程序里不留明文，也不经过我们。
-      </div>`;
-    providerForm(sheet, {
+      <div class="setup-top">
+        <div class="setup-brand"><span class="mark">月</span><span class="setup-brand-text">月见八千代</span></div>
+        <div class="setup-dots" id="setup-dots" aria-hidden="true">
+          ${SETUP_STEPS.map(() => `<span class="setup-dot"></span>`).join("")}
+        </div>
+      </div>
+      <div class="setup-body">
+        <section class="setup-pane" data-step="0">
+          <h2 class="setup-title">欢迎，先把八千代叫醒</h2>
+          <div class="hint">
+            填一个你自己的模型服务（任何 OpenAI 兼容的都行）。<br />
+            API Key 直接存进 ${state.secrets?.backend || "系统凭据管理器"}，程序里不留明文，也不经过我们。
+          </div>
+          <div class="setup-points">
+            <div class="setup-point"><span class="ic">🔒</span><div>
+              <div class="t">密钥不进配置文件</div>
+              <div class="d">存进系统凭据管理器，程序里不留明文。</div></div></div>
+            <div class="setup-point"><span class="ic">🧩</span><div>
+              <div class="t">用你自己的模型服务</div>
+              <div class="d">OpenAI 兼容的端点都行，随时能在设置里换。</div></div></div>
+            <div class="setup-point"><span class="ic">🎭</span><div>
+              <div class="t">角色随包分发</div>
+              <div class="d">Live2D 模型已经装好了，配完就能看到她动起来。</div></div></div>
+          </div>
+        </section>
+        <section class="setup-pane" data-step="1">
+          <h2 class="setup-title">挑一个外观</h2>
+          <div class="hint">随时能在设置里改，这里先挑个顺眼的。</div>
+          <div class="setup-themes" id="setup-themes"></div>
+        </section>
+        <section class="setup-pane" data-step="2">
+          <h2 class="setup-title">连接模型服务</h2>
+          <div class="hint">有预设就点一下芯片，地址和模型 ID 会自动填好。</div>
+        </section>
+      </div>
+      <div class="setup-foot">
+        <button class="btn ghost is-off" id="setup-back" type="button">上一步</button>
+        <div class="fill"></div>
+        <div class="setup-actions" id="setup-actions">
+          <button class="btn primary" id="setup-next" type="button">开始</button>
+        </div>
+      </div>
+    `;
+
+    const lastStep = SETUP_STEPS.length - 1;
+    const actionsHost = sheet.querySelector("#setup-actions");
+
+    // 第三步的正文就用设置页那份表单，动作行（测试 / 保存）挂到底部动作条上
+    providerForm(sheet.querySelector('[data-step="2"]'), {
+      actionsHost,
       onSaved: async (id, extra) => {
         const data = await reloadCore();
         const ready = state.providers.find((p) => p.id === id);
@@ -1144,9 +1222,63 @@ function openSetup() {
           setStatus("密钥只能用到本次退出（系统凭据库不可用）", true);
         }
         closeOverlay();
+        ensurePanel();                       // 配好了，角色这才登场
         setStatus(`已经接上 ${ready?.display_name || id}，开始聊吧`);
       },
     });
+
+    // 第二步：外观三张卡，点了立刻换（跟设置里那三选一同一个 applyTheme）
+    const themeBox = sheet.querySelector("#setup-themes");
+    const paintThemes = () => {
+      for (const card of themeBox.querySelectorAll(".setup-theme")) {
+        card.classList.toggle("on", card.dataset.theme === state.themeMode);
+      }
+    };
+    for (const [mode, title, desc] of SETUP_THEMES) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "setup-theme";
+      card.dataset.theme = mode;
+      card.innerHTML = `
+        <span class="swatch swatch-${mode}"><i></i><i></i><i></i></span>
+        <span class="txt"><span class="t">${title}</span><span class="d">${desc}</span></span>
+        <span class="tick">✓</span>`;
+      card.onclick = () => {
+        applyTheme(mode, { persist: true });
+        paintThemes();
+      };
+      themeBox.appendChild(card);
+    }
+    paintThemes();
+
+    // 翻页：只切 .is-active / .is-before，滑动和入场交给 CSS
+    const panes = [...sheet.querySelectorAll(".setup-pane")];
+    const dots = [...sheet.querySelectorAll(".setup-dot")];
+    const backBtn = sheet.querySelector("#setup-back");
+    const nextBtn = sheet.querySelector("#setup-next");
+    const formActions = actionsHost.querySelector(".form-actions");
+    let step = 0;
+
+    const paint = () => {
+      panes.forEach((pane, i) => {
+        pane.classList.toggle("is-active", i === step);
+        pane.classList.toggle("is-before", i < step);
+      });
+      dots.forEach((dot, i) => dot.classList.toggle("on", i <= step));
+      backBtn.classList.toggle("is-off", step === 0);
+      nextBtn.classList.toggle("is-off", step === lastStep);
+      if (formActions) formActions.classList.toggle("is-off", step !== lastStep);
+      nextBtn.textContent = step === 0 ? "开始" : "继续";
+      panes[step].scrollTop = 0;
+    };
+    const go = (next) => {
+      step = Math.max(0, Math.min(lastStep, next));
+      paint();
+    };
+
+    backBtn.onclick = () => go(step - 1);
+    nextBtn.onclick = () => go(step + 1);
+    paint();
   });
 }
 
@@ -1169,17 +1301,18 @@ async function boot() {
   const data = await reloadCore();
   applyTheme(state.cfg?.theme || "dark");     // 用户上次选的外观：system / light / dark
   renderHistory(data.conversation);
-  bootPanel();
   connectWs();
-  // 上次是"脱离到桌面"：把浮窗恢复出来（静默，别盖掉下面那句状态提示）
-  if (state.cfg?.live2d_detached) detachPet({ quiet: true });
 
   const active = state.providers.find((p) => p.id === data.active_provider);
   const ready = Boolean(active && data.active_has_key);
   if (!ready) {
-    setStatus("还没有接上模型服务，点右上角 ⚙ 配一下");
+    // 还没配好服务：这会儿不渲染 Live2D（引导页上也没地方放它，白拉一遍模型纯属浪费），
+    // 面板整个藏起来，让引导卡独占窗口
+    document.body.classList.add("oobe");
+    setStatus("还没有接上模型服务，先完成设置");
     openSetup();
   } else {
+    ensurePanel();                            // 里面会按 live2d_detached 恢复桌面浮窗
     setStatus(`已接上 ${active.display_name}`);
     setTimeout(() => setStatus(""), 2500);
   }
@@ -1210,9 +1343,9 @@ ui.input.addEventListener("keydown", (event) => {
 });
 // 滚动条只在真的在滑动时露出来：平静的时候别在右边挂一条（样式见 style.css）
 markScrolling(ui.messages);
-ui.overlay.addEventListener("click", (event) => {
-  if (event.target === ui.overlay && !state.cfg?.active_provider) closeOverlay();
-});
+// 引导向导是**故意**模态的，点遮罩不放人：老版本这里允许点空白关掉引导，结果只关了浮层、
+// body.oobe 还挂着 —— 人进了聊天界面，角色面板却永远不会出现（等于绕过了"没配好不放人进去"）。
+// 现在只有配好 provider（onSaved → ensurePanel）才会放人。
 window.addEventListener("error", (event) => {
   setStatus(`界面出错：${event.message}`, true);
   // 落盘一份：桌面应用里用户看不到 console，"点了没反应"必须能从日志查

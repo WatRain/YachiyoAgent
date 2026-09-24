@@ -1242,11 +1242,215 @@ select:open::picker(select) { opacity: 1; transform: none; }
 .sheet .foot { display: flex; gap: var(--gap-sm); }
 .sheet .foot .btn { flex: 1; }
 
+/* ───────────────────── 第一次运行引导（OOBE） ─────────────────────
+   照手机 / 电脑系统的开机引导搭：全屏玻璃卡、顶部品牌 + 步骤点、底部动作条、
+   左右滑动切页。卡片高度写死，正文区里三步绝对定位叠着 —— 翻页时底下的
+   按钮不会跟着跳（系统引导都这么干）。 */
+
+body.oobe .panel { display: none; }                                     /* 引导期间不渲染 Live2D */
+/* 引导期间遮罩铺满整窗（含标题栏那一条）：整窗只有一层模糊，y=40 就不会留分界线。
+   第一版是让遮罩从标题栏下沿开始、标题栏自己贴一份一样的底色 + 模糊，实测仍然有分界
+   （y39→y40 通道差 22，同一区域内部只有 1）—— 因为两边"背后"的东西不一样：标题栏只糊到
+   天空，遮罩还糊到了聊天面板，滤镜一样也糊不出一样的结果。
+   代价是遮罩盖住了标题栏，所以得把窗口按钮捞出来：#app 自带 z-index:1 会成栈，里面的
+   元素再高也翻不出去，这里把它的 z-index 撤成 auto（position:relative + z-index:auto
+   不成栈），按钮再用 z-index:30 越过遮罩（z-index:20）。 */
+body.oobe .overlay { inset: 0; }
+body.oobe #app { z-index: auto; }
+body.oobe .winbtn { z-index: 30; }
+/* 标题栏自己的东西（品牌、主题开关）不摆，整条浮到遮罩之上并撤掉底色：底色透明，
+   透出来的就是遮罩那层模糊，跟周围连成一片；浮在上面是为了保住拖动
+   （-webkit-app-region: drag 挂在标题栏上，被遮罩盖住就拖不动窗口了）。 */
+body.oobe .titlebar {
+  position: relative;
+  z-index: 30;                              /* 越过遮罩（z-index:20） */
+  background: transparent;
+}
+body.oobe .titlebar .brand,
+body.oobe .titlebar .seg-theme { display: none; }
+.overlay:has(.sheet.setup) { backdrop-filter: blur(20px) saturate(130%); }
+
+.sheet.setup {
+  width: min(760px, 100%);
+  height: min(640px, 100%);
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+/* 顶部：品牌 + 步骤点 */
+.setup-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: 16px 24px 14px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.setup-brand { display: flex; align-items: center; gap: 10px; }
+.setup-brand .mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--gold);
+  background: var(--seg-bg);
+  border: 1px solid var(--glass-rim);
+}
+.setup-brand-text { font-family: var(--font-display); font-size: 13px; letter-spacing: .16em; }
+
+/* 步骤点：当前那一点拉成小胶囊 */
+.setup-dots { display: flex; align-items: center; gap: 7px; }
+.setup-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  opacity: .38;
+  transition: width var(--normal) var(--spring), opacity var(--normal) var(--ease),
+              background var(--normal) var(--ease);
+}
+.setup-dot.on { width: 22px; opacity: 1; background: var(--accent); }
+
+/* 正文：三步叠在一起，靠 .is-active 交叉滑动（隐藏的仍留在 DOM 里） */
+.setup-body { position: relative; flex: 1; min-height: 0; }
+.setup-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-lg);
+  padding: 26px 28px 22px;
+  overflow-y: auto;
+  opacity: 0;
+  transform: translateX(28px);
+  pointer-events: none;
+  transition: opacity var(--normal) var(--ease), transform var(--slow) var(--spring);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.setup-pane.is-before { transform: translateX(-28px); }
+.setup-pane.is-active { opacity: 1; transform: none; pointer-events: auto; }
+/* 正文分层入场：每个直接子元素往后错 45ms */
+.setup-pane.is-active > * { animation: setup-rise var(--slow) var(--spring) backwards; }
+.setup-pane.is-active > *:nth-child(2) { animation-delay: 45ms; }
+.setup-pane.is-active > *:nth-child(3) { animation-delay: 90ms; }
+.setup-pane.is-active > *:nth-child(4) { animation-delay: 135ms; }
+.setup-pane.is-active > *:nth-child(5) { animation-delay: 180ms; }
+@keyframes setup-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.setup-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-wrap: balance;
+}
+
+/* 欢迎页那三条 */
+.setup-points { display: flex; flex-direction: column; gap: 10px; }
+.setup-point {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  border-radius: var(--r-md);
+  background: var(--field-bg);
+  border: 1px solid var(--glass-border);
+}
+.setup-point .ic { font-size: 16px; line-height: 1.45; }
+.setup-point .t { font-size: 13px; }
+.setup-point .d { margin-top: 2px; font-size: 11.5px; line-height: 1.6; color: var(--text-3); }
+
+/* 外观三张卡 */
+.setup-themes { display: flex; flex-direction: column; gap: 10px; }
+.setup-theme {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 15px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-border);
+  background: var(--field-bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+              transform var(--press) var(--ease);
+}
+.setup-theme:hover { background: var(--seg-on); }
+.setup-theme:active { transform: scale(.985); }
+.setup-theme.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.setup-theme .txt { display: flex; flex-direction: column; }
+.setup-theme .t { font-size: 13.5px; }
+.setup-theme .d { margin-top: 2px; font-size: 11.5px; color: var(--text-3); }
+.setup-theme .tick {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity var(--normal) var(--ease);
+}
+.setup-theme.on .tick { opacity: 1; }
+
+/* 卡片左边的小色板：底 / 面 / 强调 */
+.setup-theme .swatch {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  width: 46px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  border: 1px solid var(--glass-border);
+}
+.setup-theme .swatch i { display: block; }
+.setup-theme .swatch i:nth-child(1) { grid-row: span 2; }
+.swatch-system i:nth-child(1) { background: linear-gradient(160deg, #0E1420, #E9EEF7); }
+.swatch-system i:nth-child(2) { background: #E9EEF7; }
+.swatch-system i:nth-child(3) { background: #7FB2FF; }
+.swatch-light i:nth-child(1) { background: #EEF2F9; }
+.swatch-light i:nth-child(2) { background: #FFFFFF; }
+.swatch-light i:nth-child(3) { background: #7FB2FF; }
+.swatch-dark i:nth-child(1) { background: #0E1420; }
+.swatch-dark i:nth-child(2) { background: #1B2334; }
+.swatch-dark i:nth-child(3) { background: #7FB2FF; }
+
+/* 底部动作条：左「上一步」，右边是这一步的主按钮（第三步换成表单的测试 / 保存） */
+.setup-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--glass-border);
+}
+.setup-foot .fill { flex: 1; }
+.setup-actions { display: flex; align-items: center; gap: var(--gap-sm); }
+.setup-foot .btn { padding: 10px 22px; border-radius: var(--r-pill); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--seg-on); color: var(--text); }
+.setup-foot .is-off { display: none !important; }
+
 /* ───────────────────────── 无障碍 / 动效克制 ───────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
