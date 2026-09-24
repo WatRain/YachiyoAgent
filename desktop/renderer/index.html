@@ -50,12 +50,17 @@
         </div>
 
         <div id="messages" class="messages"></div>
-        <div id="status" class="status"></div>
+        <!-- is-empty：首条状态文字也要淡入，不能"啪"地出现（见 style.css 的 .status.is-empty） -->
+        <div id="status" class="status is-empty"></div>
 
         <div id="input-shell" class="input-shell">
           <textarea id="input" rows="1" placeholder="和八千代说点什么…"></textarea>
-          <button id="btn-send" class="sendbtn" title="发送（回车）">&#x2191;</button>
-          <button id="btn-stop" class="stopbtn hidden" title="停止">&#x25A0;</button>
+          <!-- 发送 / 停止叠在同一个槽里交叉淡入淡出（.btn-slot，见 style.css）：
+               换人那一刻不再"跳"。两个按钮都留在 DOM 里，仍由 .hidden 类驱动。 -->
+          <div class="btn-slot">
+            <button id="btn-send" class="sendbtn" title="发送（回车）">&#x2191;</button>
+            <button id="btn-stop" class="stopbtn hidden" title="停止">&#x25A0;</button>
+          </div>
         </div>
       </section>
 

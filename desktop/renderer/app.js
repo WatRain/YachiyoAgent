@@ -231,9 +231,25 @@ function renderHistory(messages) {
   return shown;
 }
 
+let statusFadeTimer = 0;
+
+/* 状态行的动效（约定见 style.css 末尾）：进场直接淡入，退场必须先把文字留着淡完再清空 ——
+   一置空就什么都看不见了，那文字就是"啪"地没的。整行高度固定，淡出不会让输入框跳。
+   同一个函数被连着调用（比如 onopen 清空、紧接着 onclose 报错）也安全：
+   新的文字会把正在淡出的那一层原地"接住"重新淡入。 */
 function setStatus(text, isError = false) {
-  ui.status.textContent = text || "";
+  clearTimeout(statusFadeTimer);
   ui.status.classList.toggle("error", Boolean(isError));
+  const next = text || "";
+  if (!next) {
+    ui.status.classList.add("is-empty");
+    statusFadeTimer = setTimeout(() => {
+      if (ui.status.classList.contains("is-empty")) ui.status.textContent = "";
+    }, 200);
+    return;
+  }
+  ui.status.textContent = next;
+  ui.status.classList.remove("is-empty");
 }
 
 function setBusy(busy) {
@@ -466,7 +482,8 @@ function watchGaze() {
 
 function bootPanel() {
   if (!state.live2d || !state.live2d.ready) {
-    ui.panelStatus.textContent = (state.live2d && state.live2d.message) || "没有可用的 Live2D 模型";
+    // 这种是"一直修不好"的状态：不闪，留在那儿给用户看见
+    setPanelStatus((state.live2d && state.live2d.message) || "没有可用的 Live2D 模型");
     return;
   }
   // 界面不再提供物理开关（关掉物理角色会僵在那儿，用户反馈太怪），所以这里也不传 physics：
@@ -491,20 +508,44 @@ function logToShell(...parts) {
   try { window.yachiyoShell?.log?.(...parts); } catch { /* 日志失败无所谓 */ }
 }
 
+/* 状态药丸：平时是"睡着"的，只在状态变化时现一下身。
+   flash = true 走一段渐入 → 停一会儿 → 渐出的动画（就是"模型就绪"那一下），
+   动画放完挂上 .is-off 把整颗药丸藏起来 —— 文字留在 DOM 里（无障碍能读到），
+   版面也不动，所以不会因为一句提示就把角色面板顶下去。 */
+let panelStatusTimer = 0;
+
+function setPanelStatus(text, { flash = false } = {}) {
+  const el = ui.panelStatus;
+  clearTimeout(panelStatusTimer);
+  el.classList.remove("is-flash", "is-off");
+  el.textContent = text;
+  if (!flash) return;
+  void el.offsetWidth;                 // 强制一次重排，让动画能重新播
+  el.classList.add("is-flash");
+  const done = () => {
+    clearTimeout(panelStatusTimer);
+    panelStatusTimer = 0;
+    el.classList.remove("is-flash");
+    el.classList.add("is-off");
+  };
+  el.addEventListener("animationend", done, { once: true });
+  panelStatusTimer = setTimeout(done, 3400);   // 兜底：动画被跳过（reduced-motion / 被样式禁用）时也能收尾
+}
+
 async function pollPanel() {
   const win = petWindow();
   const info = win && win.yachiyo ? (() => { try { return win.yachiyo.state(); } catch { return null; } })() : null;
 
   if (!info) {
-    ui.panelStatus.textContent = "正在唤醒八千代…";
+    setPanelStatus("正在唤醒八千代…");
   } else if (info.error) {
-    ui.panelStatus.textContent = `角色加载失败：${info.error}`;
+    setPanelStatus(`角色加载失败：${info.error}`);
     if (panelSelfCheck !== "error:" + info.error) {
       panelSelfCheck = "error:" + info.error;
       logToShell("Live2D 面板出错：" + info.error, "stage=" + info.stage, "diag=" + JSON.stringify(info.diag || []));
     }
   } else if (!info.ready) {
-    ui.panelStatus.textContent = "正在唤醒八千代…";
+    setPanelStatus("正在唤醒八千代…");
   } else {
     const now = performance.now();
     let fps = 0;
@@ -518,9 +559,9 @@ async function pollPanel() {
       lastFrameSample = { t: now, frames: info.frames };
     }
     // 状态行只说"能不能用"：帧率、物理这些在这里都是噪音（真要查看下面每 15 秒那行日志）
-    ui.panelStatus.textContent = "模型就绪";
     if (panelSelfCheck !== "ready") {
       panelSelfCheck = "ready";
+      setPanelStatus("模型就绪", { flash: true });
       logToShell("Live2D 面板就绪：" + JSON.stringify({
         canvas: info.canvas, model: info.model, physics: info.physics,
         autoTick: info.autoTick, mouthPath: info.mouthPath,
@@ -542,9 +583,32 @@ async function pollPanel() {
 
 // ───────────────────────── 浮层：引导 / 设置 ─────────────────────────
 
-function closeOverlay() {
-  ui.overlay.classList.add("hidden");
-  ui.overlay.innerHTML = "";
+/* 关浮层：先挂 .is-closing 把退出动画播一遍（进入是 sheet-in/scrim-in，出去反着来），
+   动画放完再真的收起来 —— 退出用 sheet 的 animationend 当信号，另配兜底定时器
+   （reduced-motion 或被探针禁掉动画时也得能收尾）。
+   探针要"立刻没了"就 closeOverlay({ immediate: true })。 */
+let overlayCloseTimer = 0;
+
+function closeOverlay(opts) {
+  if (ui.overlay.classList.contains("hidden")) return;
+  const immediate = Boolean(opts && opts.immediate === true);
+  const sheet = ui.overlay.querySelector(".sheet");
+  const finish = () => {
+    clearTimeout(overlayCloseTimer);
+    overlayCloseTimer = 0;
+    ui.overlay.classList.remove("is-closing");
+    ui.overlay.classList.add("hidden");
+    ui.overlay.innerHTML = "";
+  };
+  if (immediate || !sheet) { finish(); return; }
+  const onEnd = (ev) => {
+    if (ev.target !== sheet) return;      // animationend 会冒泡，别被子元素的动画骗了
+    sheet.removeEventListener("animationend", onEnd);
+    finish();
+  };
+  sheet.addEventListener("animationend", onEnd);
+  ui.overlay.classList.add("is-closing");
+  overlayCloseTimer = setTimeout(finish, 900);
 }
 
 /* 滚动条按需显示：平静的时候右边不挂那一条，真的滑过之后留 700ms 再收回去（方便去抓滑块）。
@@ -559,6 +623,9 @@ function markScrolling(el) {
 }
 
 function showSheet(build) {
+  clearTimeout(overlayCloseTimer);          // 上一个浮层还在播退场就被重新打开：取消收尾
+  overlayCloseTimer = 0;
+  ui.overlay.classList.remove("is-closing");
   ui.overlay.innerHTML = "";
   const sheet = document.createElement("div");
   sheet.className = "sheet";
@@ -909,7 +976,7 @@ async function boot() {
   const info = await window.yachiyoShell.info();
   if (info.error) {
     setStatus(`后端没起来：${info.error}`, true);
-    ui.panelStatus.textContent = "后端没起来";
+    setPanelStatus("后端没起来");
     return;
   }
   state.apiBase = info.apiBase;

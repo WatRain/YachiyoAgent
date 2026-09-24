@@ -86,11 +86,17 @@
   --gap-xl: 24px;
   --gap-2xl: 32px;
 
-  --ease: cubic-bezier(.22, .61, .36, 1);
-  --spring: cubic-bezier(.22, 1.35, .36, 1);
-  --fast: 140ms;
-  --normal: 240ms;
-  --slow: 420ms;
+  /* ── 动效节奏（完整约定见文件末尾「动效约定」）──
+     时长按"离手指多近"分档：按下去最短，控件状态次之，小面板进出场，整屏最慢。
+     退场一律比进场短一档 —— 出场拖沓比进场拖沓更容易被看出来。 */
+  --ease: cubic-bezier(.22, .61, .36, 1);    /* 通用 ease-out：进场、状态变化 */
+  --ease-in: cubic-bezier(.4, 0, 1, 1);      /* 退场：加速离开，不拖尾 */
+  --spring: cubic-bezier(.22, 1.35, .36, 1); /* 有回弹的落位：按下抬起、开关、进出场 */
+  --press: 90ms;    /* 按下 / 抬起：有触感，但短到看不清过程 */
+  --fast: 140ms;    /* 颜色、hover、小图标 */
+  --normal: 240ms;  /* 一般状态变化、小面板进场 */
+  --slow: 420ms;    /* 大面板、整屏进场 */
+  --exit: 150ms;    /* 所有退场：比任何一个进场都短 */
 
   --titlebar-height: 40px;
   --page-padding: 14px;
@@ -364,8 +370,9 @@ body {
 
 .winbtn {
   -webkit-app-region: no-drag;
-  width: 30px;
-  height: 30px;
+  position: relative;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: var(--r-sm);
   background: transparent;
@@ -373,10 +380,20 @@ body {
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease),
+              transform var(--press) var(--spring);
+}
+/* 视觉 32px，命中区补到 40×40：标题栏正好 40px 高，左右各外扩 4px ——
+   相邻按钮之间的缝是 8px，两边各 4px 正好填满，不留缝也不会互相盖住
+   （外扩重叠会让"点偏了"变成点错按钮，比命中区小一点更糟）。 */
+.winbtn::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--r-sm);
 }
 .winbtn:hover { background: var(--seg-on); color: var(--text); }
-.winbtn:active { transform: scale(.94); }
+.winbtn:active { transform: scale(.96); }
 .winbtn.close:hover { background: var(--danger); color: #fff; }
 
 /* 分段控件（主题切换、设置里的三选一） */
@@ -393,6 +410,7 @@ body {
   -webkit-backdrop-filter: blur(12px) saturate(150%);
 }
 .seg-btn {
+  position: relative;
   border: none;
   background: transparent;
   color: var(--text-2);
@@ -403,16 +421,29 @@ body {
   border-radius: var(--r-pill);
   cursor: pointer;
   transition: background var(--normal) var(--ease), color var(--normal) var(--ease),
-              transform var(--fast) var(--spring);
+              transform var(--press) var(--spring), scale var(--fast) var(--spring);
+}
+/* 命中区补高：分段控件本身矮（~26px），上下各外扩 7px 到 40px —— 正好顶到标题栏上下边，
+   再高就跑到面板上去了（被上面那层接住，等于白补）。左右不外扩：相邻按钮只隔 2px，
+   选中那个还带 scale(1.04)，再往外就盖住旁边的按钮了 —— 命中区重叠＝点错，比命中区偏小糟得多。 */
+.seg-btn::after {
+  content: "";
+  position: absolute;
+  inset: -7px 0;
+  border-radius: var(--r-pill);
 }
 .seg-btn:hover { color: var(--text); }
-.seg-btn:active { transform: scale(.95); }
+.seg-btn:active { transform: scale(.96); }
 .seg-btn[aria-checked="true"] {
   background: var(--seg-on);
   color: var(--text);
   box-shadow: var(--glass-rim), var(--shadow-sm);
 }
 .seg-theme .seg-btn { padding: 6px 10px; font-size: 13px; }
+/* 图标切换（☾ ↔ ☀）：两个按钮一直都在场，选中那个"亮起来"——底色/文字色本来就在跑过渡，
+   这里再叠一点缩放，免得切换只有色块在跳。不做瞬间显隐，那正是这种小控件最显廉价的地方。 */
+.seg-theme .seg-btn[aria-checked="true"] { scale: 1.04; }
+.seg-theme .seg-btn[aria-checked="false"] { scale: 1; }
 
 /* ───────────────────────── 主体布局 ───────────────────────── */
 
@@ -491,6 +522,7 @@ body {
 
 .dock {
   -webkit-app-region: no-drag;
+  position: relative;
   flex: none;
   width: 34px;
   height: 34px;
@@ -503,10 +535,17 @@ body {
   cursor: pointer;
   box-shadow: var(--glass-rim);
   transition: background var(--fast) var(--ease), color var(--fast) var(--ease),
-              transform var(--fast) var(--spring);
+              transform var(--press) var(--spring);
+}
+/* 34px 的方块在 40px 的头部里：向外各扩 3px 补到 40（相邻元素间距 12px，够） */
+.dock::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--r-sm);
 }
 .dock:hover { background: var(--seg-on); color: var(--text); }
-.dock:active { transform: scale(.94); }
+.dock:active { transform: scale(.96); }
 
 /* 消息列表：上下边缘做淡出（Liquid Glass 的 scroll edge effect） */
 .messages {
@@ -537,12 +576,16 @@ body {
   border: 1px solid var(--bubble-bot-border);
   background: var(--bubble-bot);
   box-shadow: var(--glass-rim), var(--shadow-sm);
+  text-wrap: pretty;
   animation: bubble-in var(--normal) var(--ease);
   transition: background var(--slow) var(--ease), border-color var(--slow) var(--ease);
 }
+/* 气泡是一次性的入场序列（keyframes 就够）：淡入 + 轻微上浮 + 一点点散焦。
+   filter 只在动画期间存在（没写 forwards），播完就回到 none，不会一直挂着合成层。 */
 @keyframes bubble-in {
-  from { opacity: 0; transform: translateY(8px) scale(.985); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(8px) scale(.985); filter: blur(3px); }
+  60%  { filter: blur(0); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 .bubble.user {
   align-self: flex-end;
@@ -606,8 +649,12 @@ body {
   font-size: 11.5px;
   letter-spacing: .04em;
   color: var(--text-2);
-  transition: color var(--fast) var(--ease);
+  text-wrap: pretty;
+  transition: color var(--fast) var(--ease), opacity var(--fast) var(--ease);
 }
+/* 清空状态是一次"退场"：app.js 先把整行淡成 .is-empty，文字留到淡完才真的删掉，
+   否则文字是"啪"地消失的（这一行高度是固定的，淡出不会让下面的输入框跳）。 */
+.status.is-empty { opacity: 0; }
 .status.error { color: var(--danger); }
 
 /* 输入区：一枚玻璃胶囊 */
@@ -650,6 +697,11 @@ body {
 }
 #input::placeholder { color: var(--text-3); }
 
+/* 发送 / 停止是"同一个位置的两种状态"：叠在一个固定 36px 的槽里交叉淡入淡出。
+   以前用 .hidden（display:none）瞬间换人，按钮是"跳"出来的。
+   槽里那两个按钮照样保留 .hidden 类（app.js 和探针都认它），只是在这里把 display 改回块级：
+   看不见但占位，才可能淡出。 */
+.btn-slot { position: relative; flex: none; width: 36px; height: 36px; }
 .sendbtn, .stopbtn {
   flex: none;
   width: 36px;
@@ -659,8 +711,31 @@ body {
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  transition: transform var(--fast) var(--spring), background var(--fast) var(--ease),
+  transition: transform var(--press) var(--spring), background var(--fast) var(--ease),
               opacity var(--fast) var(--ease);
+}
+.btn-slot > .sendbtn, .btn-slot > .stopbtn {
+  position: absolute;
+  inset: 0;
+  transition: transform var(--press) var(--spring), background var(--fast) var(--ease),
+              opacity var(--fast) var(--ease), scale var(--fast) var(--spring),
+              filter var(--fast) var(--ease), visibility 0s;
+}
+.btn-slot > .hidden {
+  display: block !important;   /* 盖住全局 .hidden：要留在版面里才能淡出 */
+  opacity: 0;
+  scale: .86;
+  filter: blur(3px);
+  pointer-events: none;
+  visibility: hidden;          /* 看不见时也把 Tab 焦点收掉 */
+  transition-delay: 0s, 0s, 0s, 0s, 0s, var(--fast);
+}
+/* 命中区 36 → 40：往槽外各扩 2px（右边是输入胶囊 8px 的内边距，不会撞到别的按钮） */
+.sendbtn::after, .stopbtn::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--r-md);
 }
 .sendbtn {
   background: linear-gradient(150deg, var(--accent-2), var(--accent));
@@ -668,7 +743,7 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .45), 0 6px 16px rgba(44, 107, 230, .3);
 }
 .sendbtn:hover { filter: brightness(1.06); }
-.sendbtn:active, .stopbtn:active { transform: scale(.92); }
+.sendbtn:active, .stopbtn:active { transform: scale(.96); }
 .sendbtn:disabled { opacity: .45; cursor: default; transform: none; }
 .stopbtn {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
@@ -761,6 +836,19 @@ body {
   box-shadow: 0 0 10px var(--gold);
 }
 
+/* "模型就绪"只在刚就绪那一下露脸：渐入 → 停一会儿 → 渐出，闪完由 app.js 挂 .is-off
+   把整颗药丸藏起来（留在版面里，不会因为一句提示就让角色面板跳一下）。
+   是一条一次性的"进场+退场"序列，所以用 keyframes。两头都按同一档时长收：
+   进场 2.8s 的 0→8%（≈224ms），退场 91%→100%（≈252ms），出场不拖尾。 */
+.panel-status.is-flash { animation: panel-status-flash 2.8s var(--ease) both; }
+.panel-status.is-off { opacity: 0; }
+@keyframes panel-status-flash {
+  0%   { opacity: 0; transform: translateY(-4px); filter: blur(2px); }
+  8%   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+  91%  { opacity: 1; transform: translateY(0);    filter: blur(0); }
+  100% { opacity: 0; transform: translateY(-2px); filter: blur(2px); }
+}
+
 /* ───────────────────────── 浮层：引导 / 设置 ───────────────────────── */
 
 .overlay {
@@ -803,6 +891,19 @@ body {
 }
 .sheet.is-scrolling { scrollbar-color: var(--track) transparent; }
 
+/* 关浮层时反着播一遍（app.js 先挂 .is-closing，animationend 之后再收起来）。
+   进场 sheet-in/scrim-in 用 --slow/--spring（420ms），退场走 --exit/--ease-in（150ms）：
+   出场只有进场的三分之一多一点，而且位移更小更"安静"。
+   注：进场这里没加散焦（skill 里 blur 是可选项）—— .sheet 自己挂着 backdrop-filter，
+   在它上面再叠一层 filter 会让那 420ms 里每帧重算一次背板模糊，代价不划算。 */
+.overlay.is-closing { animation: scrim-out var(--exit) var(--ease-in) both; }
+.overlay.is-closing .sheet { animation: sheet-out var(--exit) var(--ease-in) both; }
+@keyframes scrim-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes sheet-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(6px) scale(.99); }
+}
+
 .sheet-head { display: flex; align-items: center; gap: var(--gap-md); }
 .sheet-head .mark {
   flex: none;
@@ -825,12 +926,14 @@ body {
   font-size: 20px;
   letter-spacing: .1em;
   font-weight: 600;
+  text-wrap: balance;
 }
 .sheet .hint {
   font-size: 12px;
   line-height: 1.7;
   color: var(--text-2);
   letter-spacing: .02em;
+  text-wrap: pretty;
 }
 .sheet .sect { display: flex; flex-direction: column; gap: var(--gap-sm); }
 .sheet .sect-title {
@@ -1013,6 +1116,7 @@ select:open::picker(select) { opacity: 1; transform: none; }
 }
 
 .btn {
+  position: relative;
   border: 1px solid var(--glass-border);
   border-radius: var(--r-md);
   padding: 11px 18px;
@@ -1024,10 +1128,17 @@ select:open::picker(select) { opacity: 1; transform: none; }
   background: var(--field-bg);
   box-shadow: var(--glass-rim);
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
-              transform var(--fast) var(--spring), opacity var(--fast) var(--ease);
+              transform var(--press) var(--spring), opacity var(--fast) var(--ease);
+}
+/* 视觉高度 ~37px，上下各补 4px 到 45px（按钮之间是 8px 的缝，正好填满不重叠） */
+.btn::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+  border-radius: var(--r-md);
 }
 .btn:hover { background: var(--seg-on); }
-.btn:active { transform: scale(.97); }
+.btn:active { transform: scale(.96); }
 .btn.primary {
   background: linear-gradient(150deg, var(--accent-2), var(--accent));
   color: var(--accent-ink);
@@ -1045,6 +1156,7 @@ select:open::picker(select) { opacity: 1; transform: none; }
 
 .chips { display: flex; flex-wrap: wrap; gap: var(--gap-sm); }
 .chip {
+  position: relative;
   border: 1px solid var(--glass-border);
   background: var(--field-bg);
   color: var(--text);
@@ -1054,7 +1166,15 @@ select:open::picker(select) { opacity: 1; transform: none; }
   cursor: pointer;
   box-shadow: var(--glass-rim);
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
-              transform var(--fast) var(--spring), box-shadow var(--fast) var(--ease);
+              transform var(--press) var(--spring), box-shadow var(--fast) var(--ease);
+}
+/* 视觉高度 ~35px，上下各补 4px 到 43px，左右各 3px（chip 之间是 8px 缝，留 2px 余量）。
+   chip 会换行，所以两个方向都得留着，不能填满。 */
+.chip::after {
+  content: "";
+  position: absolute;
+  inset: -4px -3px;
+  border-radius: var(--r-pill);
 }
 .chip:hover { background: var(--seg-on); }
 .chip:active { transform: scale(.96); }
@@ -1084,6 +1204,15 @@ select:open::picker(select) { opacity: 1; transform: none; }
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18);
   transition: background var(--normal) var(--ease), border-color var(--normal) var(--ease);
 }
+/* 命中区：开关本体只有 27px 高，上下各补 7px 到 41px（偏好行内边距 12px，够伸展） */
+.switch::before {
+  content: "";
+  position: absolute;
+  inset: -7px -4px;
+  border-radius: var(--r-pill);
+}
+/* 圆钮用 translate 走位，不用 left —— left 是布局属性，每动一下都要重新排版；
+   translate 只走合成器。开关是这个界面上切换最频繁的控件，值得用对属性。 */
 .switch::after {
   content: "";
   position: absolute;
@@ -1094,13 +1223,14 @@ select:open::picker(select) { opacity: 1; transform: none; }
   border-radius: 50%;
   background: linear-gradient(150deg, #fff, #E4EAF5);
   box-shadow: 0 2px 6px rgba(0, 0, 0, .28);
-  transition: left var(--normal) var(--spring), background var(--normal) var(--ease);
+  transition: translate var(--normal) var(--spring), width var(--fast) var(--ease),
+              background var(--normal) var(--ease);
 }
 .switch.on {
   background: linear-gradient(150deg, var(--accent-2), var(--accent));
   border-color: transparent;
 }
-.switch.on::after { left: 22px; }
+.switch.on::after { translate: 19px 0; }
 .switch:active::after { width: 23px; }
 
 /* 危险动作那行 */
@@ -1116,4 +1246,31 @@ select:open::picker(select) { opacity: 1; transform: none; }
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
   }
+  /* 位移类反馈单独关掉：颜色 / 透明度的变化留着（那是信息本身），
+     但"按下去缩一下""面板滑进来"这种位移最招人不适，关掉也不会少一个状态。 */
+  :active { transform: none !important; }
 }
+
+/* ───────────────────────── 动效约定（改之前先读这段） ─────────────────────────
+ *
+ * 1) 状态变化用 transition，一次性序列用 keyframes。
+ *    悬停、选中、按下、开关、下拉开合这些"用户随时可能改主意"的地方一律 transition ——
+ *    半路改向时它就地转向；keyframes 只会从头发一遍，改了主意就得等它演完。
+ *    只有"发生一次就完了"的序列才用 keyframes：气泡落位、浮层进出场、"模型就绪"的闪入闪出。
+ *
+ * 2) 进场慢、退场快。--slow(420ms) 只给大面板和整屏，--exit(150ms) 给所有退场：
+ *    进场可以慢慢来（用户正在看它出现），退场多留一帧都是拖沓。
+ *
+ * 3) 进场 = 透明度 + 一点点位移（可选再补一点散焦，让"出现"不那么硬）；
+ *    退场 = 更短 + 位移更小。位移统一在 4~18px 这一档，没有整屏滑动。
+ *
+ * 4) 按下用 scale(.96) + --press(90ms)：要的是"按到了"的触感，不是一段动画。
+ *    prefers-reduced-motion 下所有 :active 缩放都关掉（见上面那条媒体查询）。
+ *
+ * 5) 只过渡真正会变的属性，全文件没有一处 transition: all；也刻意不用 will-change ——
+ *    这些动效都是一次性的，做动画时浏览器自己会提升合成层，常驻 will-change 只会白占显存。
+ *
+ * 6) 动效不许改变布局：需要淡出的东西（状态行、被换下的发送按钮）都留在版面里，
+ *    只改 opacity/scale/filter，免得一句话、一次切换就让整块界面跳一下。
+ *    同理，命中区只用 ::after/::before 往外扩，不动元素本身的尺寸。
+ */
