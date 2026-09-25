@@ -14,7 +14,7 @@
     "pack": "electron-builder --win --dir"
   },
   "keywords": [],
-  "author": "",
+  "author": "WatRain",
   "license": "MIT",
   "type": "commonjs",
   "devDependencies": {
