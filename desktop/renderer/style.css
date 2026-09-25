@@ -1370,6 +1370,100 @@ body.oobe .titlebar .seg-theme { display: none; }
 .setup-point .t { font-size: 13px; }
 .setup-point .d { margin-top: 2px; font-size: 11.5px; line-height: 1.6; color: var(--text-3); }
 
+/* ── 许可页（隐私政策 / 第三方组件 / 版权） ────────────────────────────
+   滚的是 .legal 这一块，不是 .setup-pane —— 勾选行固定钉在它下面，
+   滚到第几条都看得见「我已阅读并同意」。 */
+.setup-pane[data-step="1"] { gap: var(--gap-md); }
+.legal {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 15px 17px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--glass-border);
+  background: var(--field-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-border) transparent;
+}
+.legal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legal-sec + .legal-sec {
+  margin-top: 15px;
+  padding-top: 13px;
+  border-top: 1px solid var(--glass-border);
+}
+.legal-sec h3 {
+  margin: 0 0 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text);
+}
+.legal-sec ul { margin: 0; padding: 0; list-style: none; }
+.legal-sec li {
+  position: relative;
+  padding-left: 13px;
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--text-2);
+}
+.legal-sec li + li { margin-top: 5px; }
+.legal-sec li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: .75em;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.legal-sec li b { color: var(--text); font-weight: 600; }
+.legal-sec p { margin: 7px 0 0; font-size: 11.5px; line-height: 1.75; color: var(--text-2); }
+.legal-sec code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--seg-on);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+/* 组件清单排成胶囊，比列成一列省地方（.legal-sec li 那套点号要撤掉）。
+   文字色用 --text 而不是 --text-2：胶囊底是 --seg-on，实测深色主题下
+   --text-2 只有 4.41:1，压着 WCAG 的 4.5:1 门槛。 */
+.legal-libs { display: flex; flex-wrap: wrap; gap: 6px; }
+.legal-libs li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--seg-on);
+  font-size: 10.5px;
+  color: var(--text);
+}
+.legal-libs li + li { margin-top: 0; }
+.legal-libs li::before { content: none; }
+.legal-libs .l { font-size: 10px; color: var(--text-2); }
+/* 勾选行：不进 .legal，永远钉在正文下面 */
+.setup-consent {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.setup-consent input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* 外观三张卡 */
 .setup-themes { display: flex; flex-direction: column; gap: 10px; }
 .setup-theme {

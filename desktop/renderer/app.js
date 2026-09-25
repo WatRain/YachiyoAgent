@@ -1139,10 +1139,22 @@ function openSettings() {
 
 /* ── 第一次运行引导（OOBE） ─────────────────────────────────────────────
    照手机 / 电脑系统的开机引导搭：全屏玻璃卡、顶部品牌 + 步骤点、底部动作条、
-   左右滑动切页、正文分层错峰入场。三步 —— 欢迎 / 外观 / 连接。
-   三步的 DOM 一次全建好，靠 .is-active 交叉滑动（不用 display:none），
-   这样 #p-name 这些字段在哪一步都在，回上一步不用重建、探针也照样找得到。 */
-const SETUP_STEPS = ["欢迎", "外观", "连接"];
+   左右滑动切页、正文分层错峰入场。四步 —— 欢迎 / 隐私与许可 / 外观 / 连接。
+   各步的 DOM 一次全建好，靠 .is-active 交叉滑动（不用 display:none），
+   这样 #p-name 这些字段在哪一步都在，回上一步不用重建、探针也照样找得到。
+
+   为什么要插一步「隐私与许可」：这个程序要发给别人用，得让人在配服务之前
+   先看清密钥存哪、数据存哪、什么会发出去、包里带了谁的代码 —— 而且**必须勾同意
+   才能往下走**（见 setup-next 的 disabled 逻辑）。它不是弹个好看的通知，
+   是引导里唯一一条不能跳过的路。 */
+const SETUP_STEPS = ["欢迎", "隐私与许可", "外观", "连接"];
+// 「不勾同意就别想往下走」的那一步。文案和置灰逻辑都看这个下标，别在别处写死数字。
+const SETUP_AGREE_STEP = 1;
+// 版权署名。改这一处就够，许可页里那行是拼出来的。
+const APP_COPYRIGHT = "© 2026 WatRain";
+// 许可条款的版本号。条款有实质改动就 +1 —— 后端把它和同意时间一起写进
+// config.json 的 consent，将来才能判断「他同意的是不是现在这一版」。
+const LEGAL_VERSION = 1;
 const SETUP_THEMES = [
   ["system", "跟随系统", "跟 Windows 的深色 / 浅色设置走"],
   ["light", "浅色", "白天亮堂一点"],
@@ -1190,12 +1202,69 @@ function openSetup() {
               <div class="d">Live2D 模型已经装好了，配完就能看到她动起来。</div></div></div>
           </div>
         </section>
+        <!-- 隐私与许可。必须勾了下面那个框才能继续（见 paint() 里对 setup-next 的置灰）。
+             这份文案是照着程序的实际行为写的，改代码时记得回头改这里：
+             · 密钥去处   → core/secrets.py（Windows 凭据管理器，不进配置文件、不进日志）
+             · 数据目录   → core/paths.py 的 data_dir()
+             · 两条出境路 → 用户自己填的 base_url；app/assets/live2d/pet.html 里那个 Live2D CDN
+             · 组件清单   → 仓库根的 THIRD_PARTY_NOTICES.md
+             · 卸载行为   → desktop/package.json 的 nsis.deleteAppDataOnUninstall = false -->
         <section class="setup-pane" data-step="1">
+          <h2 class="setup-title">隐私与许可</h2>
+          <div class="hint">用之前，先花一分钟看完这三件事。</div>
+          <div class="legal" id="setup-legal" tabindex="0">
+            <section class="legal-sec">
+              <h3>隐私政策</h3>
+              <ul>
+                <li><b>密钥存在哪</b>：API Key 只写进这台电脑的系统凭据管理器，不写进配置文件、不写进日志，程序里不留明文。在设置里删掉 provider 时，密钥一并删除。</li>
+                <li><b>数据存在哪</b>：配置、对话记录、记忆都留在这台电脑的数据目录里（装好后是 <code>%APPDATA%\\YachiyoAgent\\data</code>）。没有账号，也没有我们的服务器 —— 这个程序不会连任何由我们控制的地址。</li>
+                <li><b>什么会发出去</b>：一是你输入的内容，会直接发给你自己填的那个模型服务端点（设置里的「接口地址」），发给谁、发什么由你决定，请一并看那家的隐私政策；二是角色渲染引擎 Live2D Cubism Core，启动时从 Live2D 官方 CDN（<code>cubism.live2d.com</code>）取一次。</li>
+                <li><b>不采集什么</b>：没有遥测、没有使用统计、没有崩溃上报、没有广告标识符。</li>
+                <li><b>卸载</b>：卸载程序不会替你删数据目录和凭据管理器里的密钥。想彻底清干净，就自己删掉上面那个目录，再到「凭据管理器 → Windows 凭据」里删掉 <code>YachiyoAgent/</code> 开头的条目。</li>
+              </ul>
+            </section>
+            <section class="legal-sec">
+              <h3>第三方组件</h3>
+              <ul class="legal-libs">
+                <li><span class="n">Electron</span><span class="l">MIT</span></li>
+                <li><span class="n">PixiJS 8.13.1</span><span class="l">MIT</span></li>
+                <li><span class="n">untitled-pixi-live2d-engine 1.4.0</span><span class="l">MIT</span></li>
+                <li><span class="n">LiteLLM</span><span class="l">MIT</span></li>
+                <li><span class="n">FastAPI</span><span class="l">MIT</span></li>
+                <li><span class="n">uvicorn</span><span class="l">BSD-3</span></li>
+                <li><span class="n">Starlette</span><span class="l">BSD-3</span></li>
+                <li><span class="n">pydantic</span><span class="l">MIT</span></li>
+                <li><span class="n">anyio</span><span class="l">MIT</span></li>
+                <li><span class="n">websockets</span><span class="l">BSD-3</span></li>
+                <li><span class="n">httpx</span><span class="l">BSD-3</span></li>
+                <li><span class="n">aiosqlite</span><span class="l">MIT</span></li>
+                <li><span class="n">Pillow</span><span class="l">MIT-CMU</span></li>
+                <li><span class="n">certifi</span><span class="l">MPL-2.0</span></li>
+                <li><span class="n">tiktoken</span><span class="l">MIT</span></li>
+                <li><span class="n">python-dotenv</span><span class="l">BSD-3</span></li>
+              </ul>
+              <p>Live2D Cubism Core © Live2D Inc.，按 Live2D Proprietary Software License Agreement 使用（专有许可，<b>不是</b>开源）。它不在安装包里，页面运行时从 Live2D 官方 CDN 加载。把 Live2D 用作 AI / 聊天机器人的界面，还需要遵守 SDK Release License。</p>
+              <p>完整的组件清单、版本号和许可全文见安装目录下的 <code>THIRD_PARTY_NOTICES.md</code>。</p>
+            </section>
+            <section class="legal-sec">
+              <h3>版权声明</h3>
+              <ul>
+                <li>本程序的代码与界面 ${APP_COPYRIGHT}。</li>
+                <li>角色模型「八千代辉夜姬」版权归 <b>雪熊企划</b> 所有。</li>
+              </ul>
+            </section>
+          </div>
+          <label class="setup-consent">
+            <input type="checkbox" id="setup-agree" />
+            <span>我已阅读并同意上面的隐私政策与许可条款</span>
+          </label>
+        </section>
+        <section class="setup-pane" data-step="2">
           <h2 class="setup-title">挑一个外观</h2>
           <div class="hint">随时能在设置里改，这里先挑个顺眼的。</div>
           <div class="setup-themes" id="setup-themes"></div>
         </section>
-        <section class="setup-pane" data-step="2">
+        <section class="setup-pane" data-step="3">
           <h2 class="setup-title">连接模型服务</h2>
           <div class="hint">有预设就点一下芯片，地址和模型 ID 会自动填好。</div>
         </section>
@@ -1212,8 +1281,9 @@ function openSetup() {
     const lastStep = SETUP_STEPS.length - 1;
     const actionsHost = sheet.querySelector("#setup-actions");
 
-    // 第三步的正文就用设置页那份表单，动作行（测试 / 保存）挂到底部动作条上
-    providerForm(sheet.querySelector('[data-step="2"]'), {
+    // 最后一步（连接）的正文就用设置页那份表单，动作行（测试 / 保存）挂到底部动作条上。
+    // 下标走 lastStep，别写死 —— 以后再加步骤就不用回来改这里。
+    providerForm(sheet.querySelector(`[data-step="${lastStep}"]`), {
       actionsHost,
       onSaved: async (id, extra) => {
         const data = await reloadCore();
@@ -1227,7 +1297,7 @@ function openSetup() {
       },
     });
 
-    // 第二步：外观三张卡，点了立刻换（跟设置里那三选一同一个 applyTheme）
+    // 外观那一步：三张卡，点了立刻换（跟设置里那三选一同一个 applyTheme）
     const themeBox = sheet.querySelector("#setup-themes");
     const paintThemes = () => {
       for (const card of themeBox.querySelectorAll(".setup-theme")) {
@@ -1256,8 +1326,13 @@ function openSetup() {
     const dots = [...sheet.querySelectorAll(".setup-dot")];
     const backBtn = sheet.querySelector("#setup-back");
     const nextBtn = sheet.querySelector("#setup-next");
+    const agreeBox = sheet.querySelector("#setup-agree");
     const formActions = actionsHost.querySelector(".form-actions");
     let step = 0;
+
+    // 许可页是引导里唯一一条"不同意就走不了"的路：没勾就把「同意并继续」置灰。
+    // 用 disabled 而不是藏起来 —— 得让人看见这里要同意，否则只会觉得按钮坏了。
+    const blocked = () => step === SETUP_AGREE_STEP && !agreeBox.checked;
 
     const paint = () => {
       panes.forEach((pane, i) => {
@@ -1268,14 +1343,19 @@ function openSetup() {
       backBtn.classList.toggle("is-off", step === 0);
       nextBtn.classList.toggle("is-off", step === lastStep);
       if (formActions) formActions.classList.toggle("is-off", step !== lastStep);
-      nextBtn.textContent = step === 0 ? "开始" : "继续";
+      nextBtn.textContent = step === 0 ? "开始"
+        : step === SETUP_AGREE_STEP ? "同意并继续" : "继续";
+      nextBtn.disabled = blocked();
       panes[step].scrollTop = 0;
     };
     const go = (next) => {
+      // 往前走要过许可页；往回走永远放行，不然一勾错就卡死在那一页了
+      if (blocked() && next > step) return;
       step = Math.max(0, Math.min(lastStep, next));
       paint();
     };
 
+    agreeBox.onchange = paint;
     backBtn.onclick = () => go(step - 1);
     nextBtn.onclick = () => go(step + 1);
     paint();
