@@ -125,31 +125,88 @@ def clear_reminders() -> None:
 
 
 # ─────────────────────────────────────────────
-#  对话记录（只保留 user / assistant，用来跨次启动恢复上下文）
+#  对话记录（user / assistant / tool 全存，用来跨次启动恢复上下文）
 # ─────────────────────────────────────────────
 
 def _conversation_path() -> Path:
     return data_dir() / CONVERSATION_FILE
 
 
+def _call_ids(item: dict) -> list[str]:
+    """一条 assistant 消息里所有 tool_calls 的 id。"""
+    return [
+        c.get("id") or ""
+        for c in item.get("tool_calls") or []
+        if isinstance(c, dict)
+    ]
+
+
+def _drop_orphan_tool_calls(items: list[dict]) -> list[dict]:
+    """把工具轮里配不上对的部分摘掉。
+
+    接口认的是严格成对的形状：assistant(tool_calls) → 每个 id 一条 tool 结果。
+    历史里难免有配不上的 —— 老版本只存了「我查一下…」那半句（工具结果没落盘），
+    或者工具跑到一半被取消。留下孤儿有两条害处：下一次请求可能直接报错；
+    模型看到「说了要查、后面什么都没有」的样板，只会学成「说了不查」。
+    所以：
+      · 带 tool_calls 但结果不齐的 assistant → 摘掉 tool_calls，那句话当普通发言；
+      · 找不到对应调用的 tool 结果 → 整条丢掉（没有上下文，留着没意义）。
+    """
+    declared = {i for item in items for i in _call_ids(item) if i}
+    answered = {item.get("tool_call_id") for item in items if item.get("role") == "tool"}
+    out: list[dict] = []
+    for item in items:
+        role = item.get("role")
+        if role == "tool":
+            if item.get("tool_call_id") in declared:
+                out.append(item)
+            continue
+        ids = [i for i in _call_ids(item) if i]
+        if item.get("tool_calls") and (not ids or not all(i in answered for i in ids)):
+            out.append({"role": role, "content": item.get("content") or ""})
+            continue
+        out.append(item)
+    return out
+
+
 def load_conversation() -> list[dict]:
     """读上次的对话记录。
 
-    只返回 role 是 user / assistant 且 content 非空的消息 ——
-    system 每次重建时都会重新拼（因为它里面带记忆和时间）。
+    ★ 连工具轮一起读回来（assistant 的 tool_calls + 后面几条 tool 结果）。
+      以前只留 user / assistant，重启后历史里就只剩「我查一下…」这种半句：
+      序列是残的（接口不认），模型看到一整段「说了不查」的样板也会照抄，
+      界面上那些工具卡片更是全都蒸发了（用户反馈过「重启后看不到调过什么工具」）。
+      tool 结果是喂回模型的内容，和助手回答一样属于这段对话。
+
+    system 不读 —— 它每次都是现拼的（里面带长期记忆和时间）。
     """
     data = _read_json(_conversation_path(), [])
     if not isinstance(data, list):
         return []
-    cleaned = []
-    for item in data:
-        if not isinstance(item, dict):
+    items: list[dict] = []
+    for raw in data:
+        if not isinstance(raw, dict):
             continue
-        role = item.get("role")
-        content = item.get("content")
-        if role in ("user", "assistant") and isinstance(content, str) and content:
-            cleaned.append({"role": role, "content": content})
-    return cleaned
+        role = raw.get("role")
+        content = raw.get("content")
+        text = content if isinstance(content, str) else ""
+        if role == "user":
+            if text:
+                items.append({"role": "user", "content": text})
+        elif role == "assistant":
+            entry: dict = {"role": "assistant", "content": text}
+            if raw.get("tool_calls"):
+                entry["tool_calls"] = raw["tool_calls"]
+            if text or entry.get("tool_calls"):
+                items.append(entry)
+        elif role == "tool" and raw.get("tool_call_id"):
+            items.append({
+                "role": "tool",
+                "tool_call_id": raw["tool_call_id"],
+                "name": raw.get("name") or "",
+                "content": text,
+            })
+    return _drop_orphan_tool_calls(items)
 
 
 def save_conversation(messages: list[dict]) -> None:

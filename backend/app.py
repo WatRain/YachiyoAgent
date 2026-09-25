@@ -23,7 +23,9 @@ LLM 相关的重活（litellm 的 import 要 7 秒）都在调用点内部发生
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Callable
 
@@ -39,6 +41,14 @@ from core.config import AppConfig, ProviderConfig
 from core.llm import humanize_error, list_models, test_connection
 from core.paths import PROJECT_ROOT, config_path, renderer_dir
 from core.secrets import SecretStore, backend_label_of
+from core.tools import (
+    ALL_TOOLS,
+    build_tools,
+    tool_command,
+    tool_failed,
+    tool_label,
+    tool_result,
+)
 
 from backend.live2d import Live2DInfo
 from backend.live2d import mount as mount_live2d
@@ -46,6 +56,10 @@ from backend.live2d import mount as mount_live2d
 log = logging.getLogger(__name__)
 
 API_VERSION = 1
+
+# 危险工具的审批弹窗最多等这么久（秒）。等不到按拒绝处理 ——
+# 不能让一轮对话因为用户走开了就永远握着 turn_lock。
+TOOL_ASK_TIMEOUT = 300.0
 
 # 前端界面（Electron 渲染进程的页面）由后端一起提供，避免 file:// 的跨源麻烦。
 # 打包后位置会变，所以走 core.paths（可用 YACHIYO_RENDERER_DIR 覆盖）。
@@ -64,6 +78,8 @@ EDITABLE_CONFIG_FIELDS = {
     "live2d_detached",
     # 隐私政策 / 许可条款的同意记录（前端过许可页时写一次）。
     "consent",
+    # 工具调用档位与 allow/deny（见 core/tools.py）
+    "tools",
 }
 
 PROVIDER_FIELDS = (
@@ -93,14 +109,83 @@ class BackendState:
     # ---------- 对话 ----------
 
     def history(self) -> list[dict]:
-        """当前对话里可持久化的部分（user / assistant）。"""
+        """当前对话里要落盘的部分：user / assistant / tool 一条不落。
+
+        ★ 连工具轮一起存（以前只存 user / assistant）。只存一半的后果实测过：
+          重启后历史里就剩「我查一下…」这类半句，序列是残的；模型看到一整段
+          「说了要查、后面什么都没有」的样板会照着抄；界面上那些工具卡片也
+          全都蒸发了 —— 用户的原话就是「重新开启应用后，之前调用过的工具看不到」。
+          工具结果是喂回模型的东西，和助手回答一样属于这段对话。
+        tool_calls 必须留着：有它，重启后的序列才是
+        「assistant 调工具 → tool 给结果 → assistant 回答」这种接口认得的形状。
+        """
         if self.chat is None:
             return []
-        return [
-            m
-            for m in self.chat.messages
-            if m.get("role") in ("user", "assistant") and m.get("content")
-        ]
+        out: list[dict] = []
+        for m in self.chat.messages:
+            role = m.get("role")
+            content = m.get("content")
+            text = content if isinstance(content, str) else ""
+            if role == "user":
+                if text:
+                    out.append({"role": "user", "content": text})
+            elif role == "assistant":
+                entry: dict = {"role": "assistant", "content": text}
+                if m.get("tool_calls"):
+                    entry["tool_calls"] = m["tool_calls"]
+                if text or entry.get("tool_calls"):
+                    out.append(entry)
+            elif role == "tool" and m.get("tool_call_id"):
+                out.append({
+                    "role": "tool",
+                    "tool_call_id": m["tool_call_id"],
+                    "name": m.get("name") or "",
+                    "content": text,
+                })
+        return out
+
+    def conversation_items(self) -> list[dict]:
+        """给界面看的对话流：气泡和工具卡片混在一条流里，顺序就是发生的顺序。
+
+        跟 history() 的区别：history() 是喂模型和存盘用的原始形状，
+        这里是翻成「人能直接画出来」的形状 —— 工具条目带上
+        label / command / result / failed，界面拿到就能画，不必自己解释参数
+        （翻译只住在 core/tools.py，这是 README 第三条设计规矩）。
+
+        command 要用那次调用**真正的参数**，而参数在前一条 assistant 的
+        tool_calls 里，所以边扫边攒一张 id → 参数的账。
+        """
+        out: list[dict] = []
+        args_of: dict[str, dict | None] = {}
+        for item in store.load_conversation():
+            role = item.get("role")
+            if role == "tool":
+                name = item.get("name") or ""
+                content = item.get("content") or ""
+                args = args_of.get(item.get("tool_call_id") or "")
+                out.append({
+                    "role": "tool",
+                    "name": name,
+                    "label": tool_label(name),
+                    "command": tool_command(name, args) if args is not None else "",
+                    "result": tool_result(content),
+                    "failed": tool_failed(content),
+                })
+                continue
+            if role == "assistant":
+                for call in item.get("tool_calls") or []:
+                    fn = call.get("function") or {}
+                    try:
+                        parsed = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        parsed = None
+                    args_of[call.get("id") or ""] = parsed if isinstance(parsed, dict) else None
+                if item.get("content"):
+                    out.append({"role": "assistant", "content": item["content"]})
+                continue
+            if role == "user" and item.get("content"):
+                out.append({"role": "user", "content": item["content"]})
+        return out
 
     async def ensure_chat(self, *, force: bool = False) -> str:
         """确认"可以聊了"。返回 "" 表示就绪，否则返回一句给用户看的原因。"""
@@ -140,6 +225,8 @@ class BackendState:
             kwargs,
             temperature=self.cfg.temperature,
             max_rounds=self.cfg.max_tool_rounds,
+            # 只把最近几个来回发给模型（理由见 core/chat.py 的 _prompt_messages）
+            keep_recent_turns=self.cfg.keep_recent_turns,
         )
         self.chat.messages.extend(carried)
         self.applied_provider = provider.id
@@ -239,7 +326,8 @@ def create_app(*, token: str = "", state: BackendState | None = None,
             "presets": [p.model_dump() for p in providers_mod.BUILTIN_PRESETS],
             "active_provider": st.cfg.active_provider,
             "active_has_key": bool(active and await st.secrets.exists(active.id)),
-            "conversation": store.load_conversation(),
+            # 界面上要画的那条流：气泡 + 工具卡片（tool 条目已翻好 label/command/result）
+            "conversation": st.conversation_items(),
             "memories": store.load_memories(),
             "reminders": store.list_reminders(),
             "secrets": await st.secrets_payload(),
@@ -262,6 +350,31 @@ def create_app(*, token: str = "", state: BackendState | None = None,
             raise HTTPException(status_code=400, detail=f"配置值不合法：{exc.error_count()} 处") from exc
         await asyncio.to_thread(st.save_config)
         return st.cfg.model_dump()
+
+    # ─────────────────────── 工具 ───────────────────────
+    @app.get("/api/tools", dependencies=guard)
+    async def get_tools() -> dict:
+        """工具目录 + 当前档位。设置界面拿它画开关。
+
+        目录是从 core/tools.py 现场读的，不在前端抄一份 ——
+        否则加了工具忘了同步界面，用户就永远看不到。
+        """
+        return {
+            "profile": st.cfg.tools.profile,
+            "allow": st.cfg.tools.allow,
+            "deny": st.cfg.tools.deny,
+            "confirm": st.cfg.tools.confirm,
+            "catalog": [
+                {
+                    "name": t.name,
+                    "label": t.label,
+                    "description": t.description,
+                    "safe": t.safe,
+                    "needs_confirm": t.preview is not None,
+                }
+                for t in ALL_TOOLS
+            ],
+        }
 
     # ─────────────────────── Provider ───────────────────────
     @app.get("/api/providers", dependencies=guard)
@@ -427,7 +540,7 @@ def create_app(*, token: str = "", state: BackendState | None = None,
     # ─────────────────────── 对话记录 ───────────────────────
     @app.get("/api/conversation", dependencies=guard)
     async def get_conversation() -> dict:
-        return {"messages": store.load_conversation()}
+        return {"messages": st.conversation_items()}
 
     @app.post("/api/conversation/clear", dependencies=guard)
     async def clear_conversation() -> dict:
@@ -486,6 +599,10 @@ def create_app(*, token: str = "", state: BackendState | None = None,
         await ws.accept()
 
         turn: asyncio.Task | None = None
+        # 危险工具正在等用户点头的请求：id -> Future[bool]。
+        # 必须建在这里（每条连接一份），因为审批回答是从这个接收循环里来的，
+        # 而 _run_turn 是另一个 task。
+        approvals: dict[str, asyncio.Future] = {}
         try:
             while True:
                 try:
@@ -505,6 +622,13 @@ def create_app(*, token: str = "", state: BackendState | None = None,
                         turn.cancel()
                     continue
 
+                if kind == "tool_decision":
+                    # 用户在弹窗上点了同意/拒绝。id 对不上就忽略（可能是上一轮迟到的回答）。
+                    fut = approvals.get(str(msg.get("id") or ""))
+                    if fut is not None and not fut.done():
+                        fut.set_result(bool(msg.get("ok")))
+                    continue
+
                 if kind != "user":
                     continue
 
@@ -514,9 +638,14 @@ def create_app(*, token: str = "", state: BackendState | None = None,
                 if turn is not None and not turn.done():
                     await ws.send_json({"type": "error", "message": "上一句还在说呢，稍等一下。"})
                     continue
-                turn = asyncio.create_task(_run_turn(ws, st, text))
+                turn = asyncio.create_task(_run_turn(ws, st, text, approvals))
                 turn.add_done_callback(_swallow)
         finally:
+            # 连接断了就别让工具那头继续等着
+            for fut in list(approvals.values()):
+                if not fut.done():
+                    fut.set_result(False)
+            approvals.clear()
             if turn is not None and not turn.done():
                 turn.cancel()
 
@@ -538,14 +667,68 @@ def _swallow(task: asyncio.Task) -> None:
         log.warning("对话任务异常：%s", type(exc).__name__)
 
 
-async def _run_turn(ws: WebSocket, st: BackendState, text: str) -> None:
+def _make_approver(
+    ws: WebSocket,
+    st: BackendState,
+    approvals: dict[str, asyncio.Future] | None,
+) -> Callable[[str, dict, str], object] | None:
+    """造一个「问用户同不同意」的回调，交给 core/tools.py 里的 Toolbox。
+
+    返回 None 表示**没有确认能力** —— 那时 core/tools.py 会拒绝所有危险工具。
+    这是有意的 fail-closed：宁可少做一件事，也不能替用户按了回车。
+    """
+    if approvals is None or not st.cfg.tools.confirm:
+        return None
+
+    async def ask(name: str, args: dict, preview: str) -> bool:
+        aid = os.urandom(6).hex()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        approvals[aid] = fut
+        try:
+            await ws.send_json({
+                "type": "tool_ask",
+                "id": aid,
+                "name": name,
+                "label": tool_label(name),
+                "preview": preview,
+            })
+        except Exception:
+            approvals.pop(aid, None)
+            return False
+        try:
+            # 用户一直不理也不能把这一轮永远挂住（turn_lock 还握着呢）。
+            # 等不到就按拒绝处理。
+            return await asyncio.wait_for(fut, timeout=TOOL_ASK_TIMEOUT)
+        except asyncio.TimeoutError:
+            log.info("工具审批等超时了，按拒绝处理：%s", name)
+            return False
+        finally:
+            approvals.pop(aid, None)
+
+    return ask
+
+
+async def _run_turn(
+    ws: WebSocket,
+    st: BackendState,
+    text: str,
+    approvals: dict[str, asyncio.Future] | None = None,
+) -> None:
     """跑一轮：用户说 → 模型流式回 → 落盘。
 
     事件协议（前端只认这几种）：
       {"type":"start"}                                  可以开始清空气泡了
       {"type":"delta","text":...}                       一段增量文字
-      {"type":"tool_start","name":...}                   模型要调工具了
-      {"type":"tool_end","name":...,"content":...}       工具返回了
+      {"type":"tool_start","name":...,"label":...,"command":...}
+                                                        模型要调工具了，
+                                                        command 是那句"执行了什么"
+      {"type":"tool_end","name":...,"result":...,"failed":...}
+                                                        工具返回了；result 是压成
+                                                        一句话的摘要（原始结果可能
+                                                        上万字），failed 只影响
+                                                        卡片长什么样
+      {"type":"tool_ask","id":...,"name":...,"label":...,"preview":...}
+                                                        要动真格了，等用户点头
       {"type":"done","text":...}                        这一轮完整文本
       {"type":"stopped"}                                被前端取消了
       {"type":"error","message":...}                    说不了话（没 key 之类）
@@ -558,12 +741,56 @@ async def _run_turn(ws: WebSocket, st: BackendState, text: str) -> None:
     chat = st.chat
     assert chat is not None
 
-    # 工具事件是同步回调里来的，先攒着，在流里按顺序发出去
-    pending: list[dict] = []
-    chat.on_tool_start = lambda name: pending.append({"type": "tool_start", "name": name})
-    chat.on_tool_end = lambda name, content: pending.append(
-        {"type": "tool_end", "name": name, "content": content}
-    )
+    # 工具事件直接从回调里发出去，不攒着 ——
+    # 这两个回调是协程函数，core/chat.py 的 _run_tool 会 await 它们，
+    # 所以「卡片出现」就是「模型刚决定要调它」的那一刻，而不是等这一轮的文字
+    # 吐完才一起冒出来（用户反馈：卡片和答案是一次性全出来的，看着像没在干活）。
+    # command 是 core 那边翻好的"执行了什么"，界面直接拿去显示 ——
+    # 界面层不该自己解释参数（那是 core/providers.py 那条规矩的同一条：翻译只有一处）。
+    async def on_tool_start(name: str, args: dict | None) -> None:
+        nonlocal collected
+        # 工具一到，上一段文字就收笔了：done 只该带最后一段。
+        # 不重置的话，「我查一下…」会被原样粘在答案前面 ——
+        # 界面上表现为答案里先重复一遍宣告语（前端那边同时会把气泡收笔，
+        # 让答案另起一个落在卡片下面）。
+        collected = ""
+        await _safe_send(ws, {
+            "type": "tool_start",
+            "name": name,
+            "label": tool_label(name),
+            "command": tool_command(name, args),
+        })
+
+    async def on_tool_end(name: str, content: str) -> None:
+        # 只发压过的一句话，不发整份结果：run_command 的上限是两万字，
+        # 全套序列化过去只为在卡片上显示一行，纯属白烧内存。
+        await _safe_send(ws, {
+            "type": "tool_end",
+            "name": name,
+            "result": tool_result(content),
+            "failed": tool_failed(content),
+        })
+
+    chat.on_tool_start = on_tool_start
+    chat.on_tool_end = on_tool_end
+
+    # 工具每轮现挂：approve 要绑在当前这条连接上（审批弹窗是发给它的），
+    # 而档位可能刚被用户在设置里改过。
+    # 挂工具失败不该让整轮变成哑巴 —— 降级成纯聊天，原因留在日志里。
+    # （这里出错要是直接抛出去，任务会静悄悄死掉，前端只会看到永远不来的回复。）
+    try:
+        chat.add_tools(*build_tools(
+            st.cfg.tools.profile,
+            approve=_make_approver(ws, st, approvals),
+            allow=st.cfg.tools.allow,
+            deny=st.cfg.tools.deny,
+        ))
+    except Exception as exc:
+        log.warning("挂载工具失败，这一轮退化成纯聊天：%s", exc)
+        try:
+            chat.clear_tools()
+        except Exception:
+            log.debug("clear_tools 也不可用，忽略", exc_info=True)
 
     chat.add_message(text)
     await ws.send_json({"type": "start"})
@@ -572,12 +799,8 @@ async def _run_turn(ws: WebSocket, st: BackendState, text: str) -> None:
     try:
         async with st.turn_lock:
             async for piece in chat.reply_stream():
-                while pending:
-                    await ws.send_json(pending.pop(0))
                 collected += piece
                 await ws.send_json({"type": "delta", "text": piece})
-            while pending:
-                await ws.send_json(pending.pop(0))
     except asyncio.CancelledError:
         # Chat 自己在被取消时已经把收到的那半截记进历史了，这里只要通知前端 + 落盘
         log.info("这一轮被用户取消，已收到的 %d 字仍保留", len(collected))

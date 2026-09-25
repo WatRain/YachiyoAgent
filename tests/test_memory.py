@@ -144,15 +144,75 @@ def test_conversation_roundtrip(isolated_data_dir):
 
 
 def test_conversation_drops_system_and_empty(isolated_data_dir):
-    """system 不能存进去 —— 它每次重建时会重新拼（因为带记忆）。"""
+    """system 不能存进去 —— 它每次重建时会重新拼（因为带记忆）。
+
+    空 content 的 assistant 也丢掉；孤零零的 tool 条目（没有 tool_call_id、
+    前面也找不到那次调用）同样留不下，理由见下面的孤儿测试。
+    """
     store.save_conversation([
         {"role": "system", "content": "人格设定"},
         {"role": "user", "content": "你好"},
         {"role": "assistant", "content": ""},        # 空内容丢掉
-        {"role": "tool", "content": "工具结果"},      # tool 也丢掉
+        {"role": "tool", "content": "工具结果"},      # 没有 tool_call_id，也丢掉
     ])
     saved = store.load_conversation()
     assert [m["role"] for m in saved] == ["user"]
+
+
+def test_conversation_keeps_the_whole_tool_round(isolated_data_dir):
+    """工具轮要整段留下来：调用的那句 + tool_calls + 结果 + 真回答。
+
+    ★ 以前只存 user / assistant，工具结果和 tool_calls 一起丢掉，历史里就剩一句
+      「我查一下。」。两个后果都实测过：重启后界面上的工具卡片全部蒸发
+      （用户的原话是「重新开启应用后，之前调用过的工具看不到」）；
+      模型看到一整段「说了要查、后面什么都没有」的样板，下次就照着演。
+    """
+    round_trip = [
+        {"role": "user", "content": "苹果折叠屏发售了吗"},
+        {"role": "assistant", "content": "我查一下。",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "web_search", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "web_search", "content": "搜索结果"},
+        {"role": "assistant", "content": "还没发售。"},
+    ]
+    store.save_conversation(round_trip)
+    assert store.load_conversation() == round_trip
+
+
+def test_conversation_drops_orphan_tool_calls(isolated_data_dir):
+    """带 tool_calls 但没有对应 tool 结果的，把 tool_calls 摘掉、那句话当普通发言。
+
+    老版本只存半句、工具跑到一半被取消，都会留下这种孤儿。留着有害：
+    下一次请求可能直接报错（接口要求严格成对）；模型看到的只有「说了不查」。
+    """
+    store.save_conversation([
+        {"role": "user", "content": "看看b站热点"},
+        {"role": "assistant", "content": "我去查一下 B 站现在的热点。",
+         "tool_calls": [{"id": "c9", "type": "function",
+                         "function": {"name": "web_search", "arguments": "{}"}}]},
+        {"role": "assistant", "content": "两个页面都打不开，我按搜到的整理："},
+        {"role": "user", "content": "谢谢"},
+        {"role": "assistant", "content": "不客气～"},
+    ])
+    saved = store.load_conversation()
+    assert [m["content"] for m in saved] == [
+        "看看b站热点",
+        "我去查一下 B 站现在的热点。",
+        "两个页面都打不开，我按搜到的整理：",
+        "谢谢",
+        "不客气～",
+    ]
+    assert "tool_calls" not in saved[1]
+
+
+def test_conversation_drops_tool_results_without_a_call(isolated_data_dir):
+    """找不到那次调用的 tool 结果整条丢掉 —— 它没有上下文，留着没意义。"""
+    store.save_conversation([
+        {"role": "user", "content": "你好"},
+        {"role": "tool", "tool_call_id": "c999", "name": "web_search", "content": "野结果"},
+        {"role": "assistant", "content": "在的～"},
+    ])
+    assert [m["role"] for m in store.load_conversation()] == ["user", "assistant"]
 
 
 def test_reminders(isolated_data_dir):

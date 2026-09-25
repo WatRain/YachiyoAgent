@@ -95,9 +95,17 @@ class FakeChat:
         self.hang = hang
         self.on_tool_start = None
         self.on_tool_end = None
+        self.tools: list[str] = []
 
     def add_message(self, text: str) -> None:
         self.messages.append({"role": "user", "content": text})
+
+    def add_tools(self, schemas, impl) -> None:
+        self.tools = [s["function"]["name"] for s in schemas]
+        assert set(self.tools) == set(impl)
+
+    def clear_tools(self) -> None:
+        self.tools = []
 
     async def reply_stream(self):
         for piece in self.pieces:
@@ -413,6 +421,236 @@ def test_ws_streams_deltas_and_saves_conversation(isolated_data_dir):
 
     saved = store.load_conversation()
     assert saved == [{"role": "user", "content": "你好"}]
+
+
+def test_history_keeps_the_tool_round(isolated_data_dir):
+    """落盘的历史要带上工具轮（tool_calls + tool 结果），不能只留半句。
+
+    只留半句的后果实测过：重启后界面上看不到调过什么工具，
+    模型也只看到一堆「说了要查、实际没查」的样板。
+    """
+    chat = FakeChat()
+    client, state = _ws_client(chat)
+    tool_call = {"id": "c1", "type": "function",
+                 "function": {"name": "web_search", "arguments": "{}"}}
+    chat.messages = [
+        {"role": "system", "content": "人格设定"},
+        {"role": "user", "content": "苹果折叠屏发售了吗"},
+        {"role": "assistant", "content": "我查一下。", "tool_calls": [tool_call]},
+        {"role": "tool", "tool_call_id": "c1", "name": "web_search", "content": "搜索结果"},
+        {"role": "assistant", "content": "还没发售。"},
+    ]
+    assert state.history() == [
+        {"role": "user", "content": "苹果折叠屏发售了吗"},
+        {"role": "assistant", "content": "我查一下。", "tool_calls": [tool_call]},
+        {"role": "tool", "tool_call_id": "c1", "name": "web_search", "content": "搜索结果"},
+        {"role": "assistant", "content": "还没发售。"},
+    ]
+
+
+def test_conversation_items_turns_tool_entries_into_cards(isolated_data_dir):
+    """给界面那条流：tool 条目要翻成能直接画的卡片（中文名 + 命令 + 结果），
+    而且位置不变 —— 卡片得落在它那次回答的地方（重启后补画靠的就是这个）。"""
+    from core import store
+
+    store.save_conversation([
+        {"role": "user", "content": "苹果折叠屏发售了吗"},
+        {"role": "assistant", "content": "我查一下。",
+         "tool_calls": [{"id": "c1", "type": "function",
+                         "function": {"name": "web_search",
+                                      "arguments": "{\"query\": \"苹果折叠屏\"}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "web_search",
+         "content": "搜索结果：发售了"},
+        {"role": "assistant", "content": "还没发售。"},
+    ])
+    chat = FakeChat()
+    client, state = _ws_client(chat)
+    items = state.conversation_items()
+    assert [i["role"] for i in items] == ["user", "assistant", "tool", "assistant"]
+    card = items[2]
+    # 中文名由 core/tools.py 翻（界面不自己解释工具名字）
+    assert card["label"] and card["label"] != "web_search"
+    assert "苹果折叠屏" in card["command"]
+    assert card["result"]
+    assert card["failed"] is False
+
+
+def test_ws_wires_tools_from_the_configured_profile(isolated_data_dir):
+    from core.tools import tool_names
+
+    chat = FakeChat(pieces=("好",))
+    client, state = _ws_client(chat)
+    state.cfg.tools.profile = "full"
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        assert ws.receive_json() == {"type": "start"}
+        assert ws.receive_json() == {"type": "delta", "text": "好"}
+        assert ws.receive_json() == {"type": "done", "text": "好"}
+
+    assert chat.tools == tool_names("full")
+
+
+def test_ws_tool_events_carry_what_the_card_needs(isolated_data_dir):
+    """界面上的工具卡片靠这两个事件画出来：中文名 + 到底执行了什么。
+
+    「执行的命令」必须由后端翻好再送来 —— 翻译只有 core/tools.py 一处，
+    渲染进程不解释参数（参数本身也只在 tool_ask 时才流到界面）。
+    """
+
+    class ToolChat(FakeChat):
+        async def reply_stream(self):
+            # 模型先动一次手，然后才开口。
+            # 回调是协程 —— 后端挂的就是协程，core 会 await 它，
+            # 所以这两句真正跑完的时候，事件已经在路上了（不是攒到最后）。
+            await self.on_tool_start("run_command", {"command": "echo 你好"})
+            await self.on_tool_end("run_command", "你好")
+            yield "好"
+
+    chat = ToolChat()
+    client, state = _ws_client(chat)
+    state.cfg.tools.profile = "full"
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        assert ws.receive_json() == {"type": "start"}
+        assert ws.receive_json() == {
+            "type": "tool_start",
+            "name": "run_command",
+            "label": "执行命令",
+            "command": "echo 你好",
+        }
+        assert ws.receive_json() == {
+            "type": "tool_end",
+            "name": "run_command",
+            "result": "你好",
+            "failed": False,
+        }
+        assert ws.receive_json() == {"type": "delta", "text": "好"}
+        assert ws.receive_json() == {"type": "done", "text": "好"}
+
+
+def test_ws_done_carries_only_the_last_segment(isolated_data_dir):
+    """模型先说一句「我查一下」再动手时，那句不能粘进最终答案。
+
+    上面那条测试里工具是开场就调的，没有前置文字，所以漏掉了这个情况：
+    collected 是一路累加的，不在工具处收笔的话，done 送出去的会是
+    「我查一下。还没发售。」—— 界面上答案前面就多重复一遍宣告语。
+    """
+
+    class ToolChat(FakeChat):
+        async def reply_stream(self):
+            yield "我查一下。"
+            await self.on_tool_start("web_search", {"query": "折叠屏"})
+            await self.on_tool_end("web_search", "搜到了 3 条")
+            yield "还没发售。"
+
+    chat = ToolChat()
+    client, state = _ws_client(chat)
+    state.cfg.tools.profile = "full"
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "苹果折叠屏"})
+        assert ws.receive_json() == {"type": "start"}
+        # 给模型动手前的那句话，前端会在收到 tool_start 时把气泡收笔
+        assert ws.receive_json() == {"type": "delta", "text": "我查一下。"}
+        assert ws.receive_json()["type"] == "tool_start"
+        assert ws.receive_json()["type"] == "tool_end"
+        assert ws.receive_json() == {"type": "delta", "text": "还没发售。"}
+        assert ws.receive_json() == {"type": "done", "text": "还没发售。"}
+
+
+def test_ws_tool_start_survives_an_unknown_tool(isolated_data_dir):
+    """配置里残留着我们不再注册的工具名时，事件也得照发（label 退回原名）。"""
+
+    class OddChat(FakeChat):
+        async def reply_stream(self):
+            await self.on_tool_start("mystery", {})
+            yield "好"
+
+    chat = OddChat()
+    client, _ = _ws_client(chat)
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        assert ws.receive_json() == {"type": "start"}
+        assert ws.receive_json() == {
+            "type": "tool_start",
+            "name": "mystery",
+            "label": "mystery",
+            "command": "",
+        }
+
+
+def test_ws_tool_end_says_whether_it_worked(isolated_data_dir):
+    """卡片上那行结果分两种长相：成了的和没成的。
+
+    "没成"只决定卡片颜色 —— 判断在 core/tools.py 的 tool_failed，这边只保证
+    那个结论真的送到了前端（前端不认识那些前缀，也不该认识）。
+    """
+
+    class ToolChat(FakeChat):
+        async def reply_stream(self):
+            await self.on_tool_start("web_search", {"query": "折叠屏"})
+            await self.on_tool_end(
+                "web_search", "搜索失败（DDGSException）。可以换个说法再试一次。"
+            )
+            await self.on_tool_end("web_search", "没有搜到「折叠屏」的结果。换个关键词可以再搜一次。")
+            yield "好"
+
+    chat = ToolChat()
+    client, state = _ws_client(chat)
+    state.cfg.tools.profile = "safe"
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        assert ws.receive_json() == {"type": "start"}
+        ws.receive_json()                       # tool_start，这条不关心
+
+        failed = ws.receive_json()
+        assert failed["type"] == "tool_end"
+        assert failed["failed"] is True
+        assert failed["result"].startswith("搜索失败")
+
+        empty = ws.receive_json()
+        # ★ 「零结果」不是失败：一次没搜到该换个关键词接着搜，
+        #   而不是让界面上亮一盏红灯（更不是让模型以为这条路走不通）。
+        assert empty["type"] == "tool_end"
+        assert empty["failed"] is False
+
+
+def test_ws_hands_the_chat_awaitable_tool_callbacks(isolated_data_dir):
+    """★ 回调必须是协程函数 —— 这是"卡片在调用时就出现"的全部机制。
+
+    同步回调没办法在工具开跑**之前**把事件发出去：它只能把事件写进一个列表，
+    等下一段文字到了再顺路带走。模型调工具的那一轮本来就不吐字，于是卡片要
+    等工具跑完、下一轮答案开口时才一起冒出来（用户就是这么看到的）。
+    挂成协程之后 core/chat.py 的 _run_tool 会 await 它，事件当场就发出去了。
+    """
+    import inspect
+
+    chat = FakeChat()
+    client, _ = _ws_client(chat)
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        ws.receive_json()       # start
+        ws.receive_json()       # done
+    assert inspect.iscoroutinefunction(chat.on_tool_start)
+    assert inspect.iscoroutinefunction(chat.on_tool_end)
+
+
+def test_ws_degrades_to_plain_chat_when_tools_cannot_be_wired(isolated_data_dir):
+    """工具箱炸了也不能让这一轮变成哑巴 —— 用户至少还能聊天。"""
+
+    class NoToolsChat(FakeChat):
+        def add_tools(self, schemas, impl):
+            raise RuntimeError("工具箱炸了")
+
+        def clear_tools(self):
+            raise RuntimeError("连清理都炸")
+
+    chat = NoToolsChat(pieces=("好",))
+    client, _ = _ws_client(chat)
+    with client.websocket_connect(f"/ws/chat?token={TOKEN}") as ws:
+        ws.send_json({"type": "user", "text": "你好"})
+        assert ws.receive_json() == {"type": "start"}
+        assert ws.receive_json() == {"type": "delta", "text": "好"}
+        assert ws.receive_json() == {"type": "done", "text": "好"}
 
 
 def test_ws_reports_missing_key(isolated_data_dir):
