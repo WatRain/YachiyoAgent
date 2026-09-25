@@ -29,6 +29,16 @@ pydantic>=2.10,<3
 # 见 app/live2d/textures.py。缩过的版本只写进数据目录，不动用户的模型文件。
 pillow>=10
 
+# ── 工具调用（见 core/tools.py）──
+# 联网搜索。ddgs 免密钥（不用让用户再去申请一个搜索 API），MIT 许可。
+ddgs>=9.0
+# 把抓回来的 HTML 转成 Markdown 再喂给模型，省 token 也更好读。MIT。
+markdownify>=1.0
+# 读写剪贴板。BSD。
+pyperclip>=1.9
+# 网页抓取走 httpx。litellm 本来就依赖它，这里显式写出来是因为 core/tools.py 直接 import 它。
+httpx>=0.27
+
 # 开发/测试
 pytest>=8
 pytest-asyncio>=0.24

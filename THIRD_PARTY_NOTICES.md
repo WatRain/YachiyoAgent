@@ -50,11 +50,25 @@
 | [pixi.js](https://pixijs.com/) | 8.13.1 | MIT | © 2013-2023 Mathew Groves, Chad Engler |
 | [untitled-pixi-live2d-engine](https://www.npmjs.com/package/untitled-pixi-live2d-engine) | 1.4.0 | MIT | © 2026 GuangChen2333 |
 | [Electron](https://www.electronjs.org/) | 44.x | MIT（内含 Chromium/Node，各自许可见 <https://www.electronjs.org/docs/latest/legal-notices>） | © Electron contributors / OpenJS Foundation |
+| [Inter](https://github.com/rsms/inter) | 可变字体 | SIL OFL 1.1 | © 2020 The Inter Project Authors |
 
 两份 MIT 许可原文随文件一起放在 `app/assets/live2d/vendor/`：
 
 - `app/assets/live2d/vendor/LICENSE-pixi.txt`
 - `app/assets/live2d/vendor/LICENSE-untitled-pixi-live2d-engine.txt`
+
+### 字体
+
+界面上标题 / 名字的拉丁字形（Inter，见 `desktop/renderer/style.css` 的 `--font-display`）
+随包分发在 `desktop/renderer/fonts/`，只收了 latin 与 latin-ext 两个 woff2 子集：
+
+- `desktop/renderer/fonts/inter-latin.woff2`
+- `desktop/renderer/fonts/inter-latin-ext.woff2`
+- `desktop/renderer/fonts/OFL.txt` —— SIL OFL 1.1 全文，版权行为
+  `Copyright 2020 The Inter Project Authors`；该字体未声明 Reserved Font Name，
+  许可允许随软件一起分发、嵌入与再分发（保留本声明与许可全文即可）。
+
+中文标题不走这个文件，落到系统里的思源黑体 / Noto Sans SC / 微软雅黑那一串。
 
 ---
 
@@ -71,9 +85,15 @@
 | [websockets](https://websockets.readthedocs.io/) | BSD-3-Clause |
 | [httpx](https://www.python-httpx.org/) | BSD-3-Clause |
 | [Pillow](https://python-pillow.org/) | MIT-CMU |
+| [aiosqlite](https://github.com/omnilib/aiosqlite) | MIT |
 | [certifi](https://github.com/certifi/python-certifi) | MPL-2.0 |
 | [tiktoken](https://github.com/openai/tiktoken) | MIT（打包时会一并带上它的 BPE 词表） |
 | [python-dotenv](https://github.com/theskumar/python-dotenv) | BSD-3-Clause |
+| [ddgs](https://github.com/deedy5/ddgs) | MIT（联网搜索，免密钥） |
+| [markdownify](https://github.com/matthewwithanm/python-markdownify) | MIT（网页转 Markdown） |
+| [pyperclip](https://github.com/asweigart/pyperclip) | BSD-3-Clause（剪贴板） |
+| [lxml](https://lxml.de/) | BSD-3-Clause（markdownify 的解析后端） |
+| [beautifulsoup4](https://www.crummy.com/software/BeautifulSoup/) | MIT（同上） |
 
 litellm 在调用各家模型服务时会用到对应的 SDK / HTTP 客户端
 （如 `openai`、`aiohttp`、`requests`、`tiktoken` 等），它们分别是

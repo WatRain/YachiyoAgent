@@ -24,7 +24,7 @@ from core.paths import config_path
 log = logging.getLogger(__name__)
 
 # 改结构时 +1，并在 _migrate() 里写升级逻辑
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 Protocol = Literal["openai", "anthropic", "gemini", "custom"]
 
@@ -57,6 +57,29 @@ class ConsentRecord(BaseModel):
     at: str = ""        # 同意时间，ISO 8601（带时区）
 
 
+class ToolSettings(BaseModel):
+    """工具调用偏好（见 core/tools.py）。
+
+    profile 三档：
+      off   一个工具都不挂，退化成纯聊天
+      safe  联网 / 时间 / 记忆 / 截图 / 剪贴板 / 只读文件（默认）
+      full  safe + 写文件 / 改文件 / 打开路径 / 执行命令
+
+    allow / deny 是额外的白名单与黑名单：想单开一个危险工具又不想整体放开，
+    就写 allow=["run_command"]。deny 优先级更高，永远踢得掉。
+
+    profile 故意留成 str 而不是 Literal：万一写了个不认识的值，
+    core/tools.py 会把它当 safe 处理，总比整个配置校验失败退回默认值好。
+    """
+
+    profile: str = "safe"
+    allow: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+    # 危险工具动手前弹窗让用户点头。默认开 —— 关掉等于把「每次确认」
+    # 换成「直接动手」，那是个需要用户自己承担的选择。
+    confirm: bool = True
+
+
 class AppConfig(BaseModel):
     schema_version: int = SCHEMA_VERSION
     active_provider: str = ""
@@ -86,6 +109,9 @@ class AppConfig(BaseModel):
     # 这是**证据**，不是开关：界面上该拦还是拦，不看这个字段。
     consent: ConsentRecord = Field(default_factory=ConsentRecord)
 
+    # 工具调用（见 ToolSettings / core/tools.py）
+    tools: ToolSettings = Field(default_factory=ToolSettings)
+
 
 def _migrate(raw: dict) -> AppConfig:
     """把任意历史版本的配置升到当前版本。"""
@@ -101,8 +127,13 @@ def _migrate(raw: dict) -> AppConfig:
         # 这里显式补一条是想把升级路径留在纸面上（也是以后加字段的样板）。
         raw.setdefault("consent", {})
 
+    if version < 3:
+        # 2 -> 3：加了「工具设置」。同样自带默认值（safe 档），
+        # 老配置升上来等于「从没调过工具」→ 直接就是安全档。
+        raw.setdefault("tools", {})
+
     # 以后加字段的写法（示例）：
-    # if version < 3:
+    # if version < 4:
     #     raw["new_field"] = 默认值
 
     raw["schema_version"] = SCHEMA_VERSION
