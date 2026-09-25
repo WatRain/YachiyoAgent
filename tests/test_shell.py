@@ -111,6 +111,89 @@ def test_physics_switch_is_gone_from_settings() -> None:
     assert "角色物理" not in app
 
 
+def test_tool_calls_are_shown_with_what_they_will_run() -> None:
+    """模型动手时要看得见「哪个工具」+「执行的命令」。
+
+    只有一句状态行不够用：用户不知道模型在动什么，也就没法决定要不要安心。
+    命令是后端翻好送来的（见 core/tools.py 的 tool_command），界面只管显示。
+    """
+    app = _text(APP_JS)
+    assert "function addToolCall(" in app
+    assert "tool-call" in app
+    assert "msg.command" in app
+    assert '"tool_start"' in app and '"tool_end"' in app
+
+
+def test_tool_calls_show_the_result_when_they_finish() -> None:
+    """干完活还得说一句「拿回来了什么」，卡片不能一直只显示它要干什么。
+
+    结果由后端压成一句话送来（core/tools.py 的 tool_result）—— 界面不做截断，
+    也不认识"失败"该怎么判，只认 msg.failed 这个布尔值。
+    """
+    app = _text(APP_JS)
+    assert "msg.result" in app
+    assert "msg.failed" in app
+    assert "tool-call-result" in app
+    # 收尾时得把事件本身传进去，不然拿不到 result —— 卡片会一直停在"正在用…"
+    assert "finishToolCall(msg)" in app
+
+
+def test_tool_call_results_go_in_as_text_not_html() -> None:
+    """工具结果里可能有尖括号（读到的代码、网页标题），一律当字面量。
+
+    这里是 textContent 不是 innerHTML —— 走错一步，用户读一次文件就够
+    在自己界面上执行一段陌生脚本了。
+    """
+    app = _text(APP_JS)
+    # 结果那一行在 finishCard 里（实时收尾和重启后补画共用它）
+    start = app.index("function finishCard(")
+    block = app[start : app.index("function addToolCall(", start)]
+    assert "line.textContent = text" in block
+    assert "innerHTML" not in block
+
+
+def test_render_history_draws_tool_cards_too() -> None:
+    """重启后也要把上次调过的工具补画回来。
+
+    后端给的流里 tool 条目已经翻好了（label / command / result），
+    但 renderHistory 以前只认 user / assistant，历史里的工具调用全蒸发了 ——
+    用户的原话是「重新开启应用后，之前调用过的工具看不到」。
+    """
+    app = _text(APP_JS)
+    start = app.index("function renderHistory(")
+    block = app[start : app.index("/* 工具卡片", start)]
+    assert 'role === "tool"' in block
+    assert "buildToolCard(message)" in block
+    assert "finishCard(card," in block
+
+
+def test_the_answer_bubble_is_created_lazily() -> None:
+    """助手气泡不能在发消息时就占好位。
+
+    模型要是先调工具再回话，工具卡片就只能排在那个空气泡下面 ——
+    最后答案反而显示在「我调了什么工具」的上面，顺序整个反掉。
+    """
+    app = _text(APP_JS)
+    assert "function ensureReply()" in app
+    assert "setBubbleText(ensureReply(), replyText)" in app
+    send_block = app[app.index("function sendMessage()") :]
+    assert "reply = addBubble(" not in send_block[:1500]
+
+
+def test_the_answer_starts_a_new_bubble_under_the_tool_card() -> None:
+    """工具卡片之后的答案必须另起一个气泡。
+
+    模型爱先说一句「我查一下」再动手（实测每个用了工具的回合都有这么一句），
+    那句话留在卡片上面没问题 —— 时间顺序就是如此。但真正的答案要是还写进同一个
+    气泡，就会显示在卡片的上面，读起来像「回复在工具调用的上方」。
+    """
+    app = _text(APP_JS)
+    start = app.index("function addToolCall(")
+    block = app[start : app.index("function finishToolCall(", start)]
+    assert "reply = null;" in block
+    assert 'replyText = "";' in block
+
+
 def test_live2d_panel_is_an_iframe_of_our_own_origin() -> None:
     """角色画在同源的 iframe 里 —— 这样才能直接调它的 yachiyo API。
 

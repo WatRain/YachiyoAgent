@@ -110,71 +110,317 @@ function escapeHtml(text) {
     .replace(/"/g, "&quot;");
 }
 
-/** 极简 Markdown：够用、无毒、零依赖（不引 marked 之类的包）。
- *  先整体转义，再按行处理，所以模型吐出来的 HTML 不会被当标签执行。 */
-function mdToHtml(source) {
-  const blocks = [];
-  let text = escapeHtml(source || "");
+/** 零依赖的 Markdown 渲染（不引 marked 之类的包：离线可用、没有供应链、也没有体积）。
+ *  支持：围栏代码块（``` / ~~~，反引号个数不限，带语言标签和复制按钮）、标题、分隔线、
+ *  引用（多行合成一块）、有序 / 无序 / 任务列表（按缩进嵌套、续行并进上一项）、表格、
+ *  行内代码、粗体、斜体、删除线、链接、裸链接。段落里的单个换行按 <br> 走 ——
+ *  模型吐出来的换行通常就是想换行，合成一坨反而难读。
+ *
+ *  安全约定：**只有本文件拼出来的标签会进 innerHTML**。模型内容一律先过 escapeHtml；
+ *  链接只放行 http/https（javascript: 之类退化成纯文本）；图片不渲染成 <img>，
+ *  只当链接 —— CSP 的 img-src 只有 self/data/blob/127.0.0.1，外域图本来也加载不出来。
+ */
 
-  // 先摘出围栏代码块，免得里面的 * _ # 被后面的规则改坏
-  text = text.replace(/```([\w+-]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
-    const cls = lang ? ` class="language-${lang}"` : "";
-    blocks.push(`<pre><code${cls}>${code.replace(/\n$/, "")}</code></pre>`);
-    return `\u0000${blocks.length - 1}\u0000`;
-  });
+/* 行内元素：一趟扫完，按优先级排（代码 > 链接 > 粗斜 > 粗 > 删 > 斜 > 裸链接），
+   没被匹配到的片段才转义成文本。_ 的强调要卡词边界，不然 snake_case 会被拆成斜体。 */
+const MD_INLINE = /(`+)([\s\S]*?)\1|!?\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+["'][^"']*["'])?\)|\*\*\*([^*]+)\*\*\*|___([^_]+)___|\*\*([^*]+)\*\*|(?<![A-Za-z0-9_])__([^_]+)__(?![A-Za-z0-9_])|~~([^~]+)~~|\*([^*\n]+)\*|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|(https?:\/\/[^\s<>()\[\]]+)/g;
 
-  const inline = (s) => s
-    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-    .replace(/\[([^\]\n]+)\]\((https?:[^)\s]+)\)/g,
-      '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-
-  const out = [];
-  let list = null;          // "ul" / "ol" / null
-  const closeList = () => { if (list) { out.push(`</${list}>`); list = null; } };
-
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-
-    if (!line.trim()) { closeList(); continue; }
-
-    const fence = line.match(/^\u0000(\d+)\u0000$/);
-    if (fence) { closeList(); out.push(blocks[Number(fence[1])]); continue; }
-
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      closeList();
-      const level = Math.min(heading[1].length + 2, 6);
-      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
-      continue;
-    }
-
-    if (/^(-{3,}|\*{3,})$/.test(line.trim())) { closeList(); out.push("<hr>"); continue; }
-
-    const quote = line.match(/^&gt;\s?(.*)$/);
-    if (quote) { closeList(); out.push(`<blockquote>${inline(quote[1])}</blockquote>`); continue; }
-
-    const bullet = line.match(/^\s*[-*+]\s+(.*)$/);
-    if (bullet) {
-      if (list !== "ul") { closeList(); out.push("<ul>"); list = "ul"; }
-      out.push(`<li>${inline(bullet[1])}</li>`);
-      continue;
-    }
-
-    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
-    if (numbered) {
-      if (list !== "ol") { closeList(); out.push("<ol>"); list = "ol"; }
-      out.push(`<li>${inline(numbered[1])}</li>`);
-      continue;
-    }
-
-    closeList();
-    out.push(`<p>${inline(line)}</p>`);
+function mdInline(text) {
+  // 每次调用现建一个正则：同一个对象被递归调用会把 lastIndex 搅乱
+  const re = new RegExp(MD_INLINE.source, "g");
+  const s = String(text);
+  let out = "";
+  let last = 0;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    // 没被规则吃掉的片段才是纯文本 —— 必须转义（模型吐的 HTML 就死在这一步）
+    out += escapeHtml(s.slice(last, m.index));
+    last = m.index + m[0].length;
+    const g = m.slice(1, 13);
+    if (g[0] !== undefined) out += `<code>${escapeHtml(g[1])}</code>`;
+    else if (g[2] !== undefined) out += mdLink(g[2], g[3]);
+    else if (g[4] !== undefined) out += `<strong><em>${mdInline(g[4])}</em></strong>`;
+    else if (g[5] !== undefined) out += `<strong><em>${mdInline(g[5])}</em></strong>`;
+    else if (g[6] !== undefined) out += `<strong>${mdInline(g[6])}</strong>`;
+    else if (g[7] !== undefined) out += `<strong>${mdInline(g[7])}</strong>`;
+    else if (g[8] !== undefined) out += `<del>${mdInline(g[8])}</del>`;
+    else if (g[9] !== undefined) out += `<em>${mdInline(g[9])}</em>`;
+    else if (g[10] !== undefined) out += `<em>${mdInline(g[10])}</em>`;
+    else out += mdAutolink(g[11]);
+    if (re.lastIndex <= m.index) re.lastIndex = m.index + 1;   // 防零宽死循环
   }
-  closeList();
-  return out.join("");
+  return out + escapeHtml(s.slice(last));
 }
+
+/** 链接只放行 http/https；别的协议（javascript:、data:…）原样当文本，不给它变成可点的东西。 */
+function mdLink(label, href) {
+  const url = String(href || "").trim();
+  if (!/^https?:\/\//i.test(url)) return escapeHtml(String(label || "") + "（" + url + "）");
+  const text = String(label || "").trim() || url;
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${mdInline(text)}</a>`;
+}
+
+/** 裸链接：句末的标点不属于 URL，得留在链接外面（中文句号也一样）。 */
+function mdAutolink(url) {
+  const trimmed = String(url).replace(/[.,;:!?，。；：！？、）】》」』]+$/, "");
+  const tail = String(url).slice(trimmed.length);
+  return `<a href="${escapeHtml(trimmed)}" target="_blank" rel="noreferrer">${escapeHtml(trimmed)}</a>`
+    + escapeHtml(tail);
+}
+
+/** 代码块：语言标签 + 复制按钮。复制按钮是事件代理（气泡每次重渲染都换 innerHTML）。 */
+function mdCode(code, lang) {
+  const cls = lang ? ` class="language-${escapeHtml(lang)}"` : "";
+  return `<div class="code-block"><div class="code-head">`
+    + `<span class="code-lang">${escapeHtml(lang || "")}</span>`
+    + `<button class="code-copy" type="button">复制</button></div>`
+    + `<pre><code${cls}>${escapeHtml(code)}</code></pre></div>`;
+}
+
+const MD_FENCE = /^ {0,3}(`{3,}|~{3,})\s*([^`]*)$/;
+const MD_FENCE_END = /^ {0,3}(`{3,}|~{3,})\s*$/;
+const MD_HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+const MD_HR = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const MD_QUOTE = /^ {0,3}>\s?(.*)$/;
+const MD_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+
+function mdToHtml(source) {
+  return mdBlocks(String(source == null ? "" : source).split(/\r?\n/)).join("");
+}
+
+/** 返回块级标签的数组（不是拼好的字符串）：列表项要单独剥掉顶层的 <p> 壳。 */
+function mdBlocks(lines) {
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!line.trim()) { i++; continue; }
+
+    // 围栏代码块：没闭合也照收（流式输出时经常先出现 ``` 才慢慢吐内容）
+    const fence = line.match(MD_FENCE);
+    if (fence) {
+      const mark = fence[1][0];
+      const len = fence[1].length;
+      const lang = (fence[2] || "").trim().split(/\s+/)[0] || "";
+      const body = [];
+      i++;
+      while (i < lines.length) {
+        const close = lines[i].match(MD_FENCE_END);
+        if (close && close[1][0] === mark && close[1].length >= len) { i++; break; }
+        body.push(lines[i]);
+        i++;
+      }
+      out.push(mdCode(body.join("\n"), lang));
+      continue;
+    }
+
+    const heading = line.match(MD_HEADING);
+    if (heading) {
+      // 气泡里 h1 太大，整体降两级：## → h4
+      const level = Math.min(heading[1].length + 2, 6);
+      out.push(`<h${level}>${mdInline(heading[2])}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    if (MD_HR.test(line)) { out.push("<hr>"); i++; continue; }
+
+    // 引用：连续的 > 行合成一块，里面再当 Markdown 递归渲染
+    if (MD_QUOTE.test(line)) {
+      const inner = [];
+      while (i < lines.length) {
+        const q = lines[i].match(MD_QUOTE);
+        if (q) { inner.push(q[1]); i++; continue; }
+        if (lines[i].trim() && !MD_FENCE.test(lines[i]) && !MD_ITEM.test(lines[i])
+            && !MD_HEADING.test(lines[i]) && !MD_HR.test(lines[i])) { inner.push(lines[i]); i++; continue; }
+        break;
+      }
+      out.push(`<blockquote>${mdBlocks(inner).join("")}</blockquote>`);
+      continue;
+    }
+
+    // 表格：这一行有 | 且下一行是分隔行
+    if (line.includes("|") && i + 1 < lines.length && mdTableAlign(lines[i + 1])) {
+      const table = mdTable(lines, i);
+      out.push(table.html);
+      i = table.next;
+      continue;
+    }
+
+    if (MD_ITEM.test(line)) {
+      const list = mdList(lines, i);
+      out.push(list.html);
+      i = list.next;
+      continue;
+    }
+
+    // 段落：一直吃到空行或下一个块级元素为止
+    const para = [];
+    while (i < lines.length) {
+      const l = lines[i];
+      if (!l.trim()) break;
+      if (MD_FENCE.test(l) || MD_HEADING.test(l) || MD_HR.test(l) || MD_QUOTE.test(l) || MD_ITEM.test(l)) break;
+      if (l.includes("|") && i + 1 < lines.length && mdTableAlign(lines[i + 1])) break;
+      para.push(mdInline(l.replace(/[ \t]+$/, "")));
+      i++;
+    }
+    out.push(`<p>${para.join("<br>")}</p>`);
+  }
+  return out;
+}
+
+function mdLeadingWidth(line) {
+  let n = 0;
+  for (const ch of line) {
+    if (ch === " ") n++;
+    else if (ch === "\t") n += 4;
+    else break;
+  }
+  return n;
+}
+
+function mdSplitRow(line) {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
+}
+
+/** 表格分隔行 → 每列的对齐；不是分隔行就返回 null。 */
+function mdTableAlign(line) {
+  const cells = mdSplitRow(line);
+  if (!cells.length) return null;
+  const align = [];
+  for (const cell of cells) {
+    if (!/^:?-+:?$/.test(cell)) return null;
+    align.push(cell.startsWith(":") && cell.endsWith(":") ? "center"
+      : cell.endsWith(":") ? "right"
+        : cell.startsWith(":") ? "left" : "");
+  }
+  return align;
+}
+
+function mdTable(lines, start) {
+  const align = mdTableAlign(lines[start + 1]);
+  const head = mdSplitRow(lines[start]);
+  let i = start + 2;
+  const rows = [];
+  while (i < lines.length && lines[i].trim() && lines[i].includes("|")) {
+    rows.push(mdSplitRow(lines[i]));
+    i++;
+  }
+  const attr = (k) => (align[k] ? ` class="ta-${align[k]}"` : "");
+  const thead = head.map((c, k) => `<th${attr(k)}>${mdInline(c)}</th>`).join("");
+  const tbody = rows.map((r) =>
+    `<tr>${r.map((c, k) => `<td${attr(k)}>${mdInline(c)}</td>`).join("")}</tr>`).join("");
+  return {
+    html: `<div class="md-table"><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>`,
+    next: i,
+  };
+}
+
+/** 列表：先圈出属于这个列表的连续行，再按缩进把项分出来，每项的内容递归当 Markdown 渲染。 */
+function mdList(lines, start) {
+  const first = lines[start].match(MD_ITEM);
+  const baseIndent = first[1].length;
+  const firstOrdered = /^\d/.test(first[2]);
+  let end = start;
+  while (end < lines.length) {
+    const l = lines[end];
+    if (!l.trim()) {
+      const next = lines[end + 1];
+      if (next === undefined) break;
+      const nm = next.match(MD_ITEM);
+      if (!((nm && nm[1].length >= baseIndent) || mdLeadingWidth(next) > baseIndent)) break;
+      end++;
+      continue;
+    }
+    const m = l.match(MD_ITEM);
+    if (m && m[1].length === baseIndent && /^\d/.test(m[2]) !== firstOrdered) break;  // 换了一种列表，交给外层
+    if (m && m[1].length >= baseIndent) { end++; continue; }
+    if (!m && mdLeadingWidth(l) > baseIndent) { end++; continue; }
+    break;
+  }
+  return { html: mdListItems(lines.slice(start, end), baseIndent, firstOrdered), next: end };
+}
+
+function mdListItems(block, baseIndent, ordered) {
+  const items = [];
+  let cur = null;
+  for (const line of block) {
+    const m = line.match(MD_ITEM);
+    if (m && m[1].length === baseIndent && /^\d/.test(m[2]) === ordered) {
+      // markerWidth：把续行按标记宽度回缩，"  - 子项" 就落到子列表该有的缩进上
+      cur = { body: [m[3]], markerWidth: m[0].length - m[3].length };
+      items.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    if (!line.trim()) { cur.body.push(""); continue; }
+    cur.body.push(line.slice(Math.min(mdLeadingWidth(line), cur.markerWidth)));
+  }
+
+  const startNum = ordered ? Number(block[0].match(MD_ITEM)[2].replace(/[.)]$/, "")) : 1;
+  const startAttr = ordered && startNum > 1 ? ` start="${startNum}"` : "";
+  // 列表里出现过空行就是「松散列表」：段落各自留着 <p>；否则是紧凑列表，段落外壳要剥掉
+  const loose = block.some((l) => !l.trim());
+  const html = items.map((it) => {
+    let box = "";
+    const task = it.body[0].match(/^\[([ xX])\]\s+(.*)$/);
+    if (task) {
+      it.body[0] = task[2];
+      box = `<input type="checkbox" disabled${task[1].toLowerCase() === "x" ? " checked" : ""} /> `;
+    }
+    return `<li>${box}${mdItemBody(it.body, loose)}</li>`;
+  }).join("");
+  return `<${ordered ? "ol" : "ul"}${startAttr}>${html}</${ordered ? "ol" : "ul"}>`;
+}
+
+/** 列表项的内容：紧凑列表把顶层段落的 <p> 剥掉（只剥顶层，嵌套列表/引用里的不动）。 */
+function mdItemBody(lines, loose) {
+  const body = lines.slice();
+  while (body.length && !body[body.length - 1].trim()) body.pop();
+  const blocks = mdBlocks(body);
+  if (loose) return blocks.join("");
+  return blocks.map((b) => {
+    const only = b.match(/^<p>([\s\S]*)<\/p>$/);
+    return only ? only[1] : b;
+  }).join("");
+}
+
+/* 代码块的复制按钮：代理挂在消息容器上 —— 气泡每帧都在重渲染 innerHTML，
+   直接往按钮上绑 onclick 一刷新就没了。 */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // 退路：clipboard 拿不到权限时用老办法
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch { return false; }
+  }
+}
+
+ui.messages.addEventListener("click", (event) => {
+  const btn = event.target.closest(".code-copy");
+  if (!btn) return;
+  const code = btn.closest(".code-block") && btn.closest(".code-block").querySelector("code");
+  copyText(code ? code.textContent : "").then((ok) => {
+    btn.textContent = ok ? "已复制" : "复制失败";
+    btn.classList.toggle("bad", !ok);
+    setTimeout(() => { btn.textContent = "复制"; btn.classList.remove("bad"); }, 1200);
+  });
+});
 
 /** 调后端接口。token 走请求头（后端 /api/* 认 X-Yachiyo-Token）。 */
 async function api(path, { method = "GET", body = null } = {}) {
@@ -220,17 +466,114 @@ function scrollDown() {
 
 function renderHistory(messages) {
   ui.messages.innerHTML = "";
+  toolCards = [];               // 补画的历史卡片都是"已完成"，不留给 tool_end 认领
   let shown = 0;
   for (const message of messages || []) {
     const role = message.role;
     const content = message.content;
-    // 只画对话本身：system（人格设定）和 tool（工具调用）不是给用户看的
+    // 工具卡片：重启后也要把上次调过什么补回来。
+    // 后端已经把 label / command / result 翻好了（跟实时那次是同一个函数），
+    // 这里只负责画，所以补出来的卡片和当时看到的长得一模一样。
+    if (role === "tool") {
+      const card = buildToolCard(message);
+      finishCard(card, message.result || "", message.failed);
+      ui.messages.appendChild(card);
+      shown += 1;
+      continue;
+    }
+    // 只画对话本身：system（人格设定）不是给用户看的
     if (!["user", "assistant"].includes(role) || !content) continue;
     addBubble(content, { role: role === "user" ? "user" : "bot", animate: false });
     shown += 1;
   }
   if (shown) scrollDown();
   return shown;
+}
+
+/* 工具卡片：模型动手的时候，对话流里插一张这样的小卡片 ——
+   工具的中文名 + 它到底要执行什么。
+
+   为什么非要有：模型调工具时会安静好几秒，用户只看到状态行在转，
+   完全不知道它在干嘛、更不知道要不要担心。把「执行了什么」摆出来，
+   这几秒就从"卡住了"变成"它在干活"。
+
+   command 是后端翻好的（core/tools.py 的 tool_command），界面只管显示 ——
+   翻译只有一处，前端不自己解释参数。 */
+let toolCards = [];          // 本轮还没收尾的卡片，tool_end 按顺序认领
+
+/* 卡片的骨架（圆点 + 中文名 + 要执行什么）。实时插入和重启后补画共用这一份 ——
+   两处各写一遍，迟早会长得不一样。 */
+function buildToolCard(msg) {
+  const card = document.createElement("div");
+  card.className = "tool-call";
+
+  const head = document.createElement("div");
+  head.className = "tool-call-head";
+
+  const dot = document.createElement("span");
+  dot.className = "tool-call-dot";
+
+  const label = document.createElement("span");
+  label.className = "tool-call-label";
+  label.textContent = msg.label || msg.name || "工具";
+  head.append(dot, label);
+  card.appendChild(head);
+
+  // 不用参数的工具（看时间、截屏）就没有这一行，卡片自动矮一截
+  if (msg.command) {
+    const pre = document.createElement("pre");
+    pre.className = "tool-call-cmd";
+    const code = document.createElement("code");
+    code.textContent = msg.command;
+    pre.appendChild(code);
+    card.appendChild(pre);
+  }
+  return card;
+}
+
+/* 收尾：写上「拿回来了什么」。收尾两次无妨（classList.add 是幂等的）。 */
+function finishCard(card, text, failed) {
+  card.classList.add("is-done");
+  if (failed) card.classList.add("is-failed");
+  if (!text) return;              // 没结果就不加这一行，卡片自动矮一截
+  const line = document.createElement("p");
+  line.className = "tool-call-result";
+  line.textContent = text;        // textContent：结果里可能有尖括号，一律当字面量
+  card.appendChild(line);
+}
+
+function addToolCall(msg) {
+  const card = buildToolCard(msg);
+
+  ui.messages.appendChild(card);
+  scrollDown();
+  toolCards.push(card);
+
+  // 卡片之前那段文字就留在上面 —— 按时间顺序它确实发生在调用之前
+  // （模型爱先说一句「我查一下」，日志里每个用了工具的回合都有这么一句）。
+  // 但它不能继续当答案的容器：这里收笔，让后面真正的答案另起一个气泡落在卡片下面，
+  // 否则答案会写进上面那个气泡里，看着像是「回复在工具调用的上方」。
+  reply = null;
+  replyText = "";
+}
+
+/* 一次调用做完了：把最早那张还在转的卡片收尾，顺手写上「拿回来了什么」。
+   按顺序认领（FIFO）—— 后端的 tool_start / tool_end 本来就是成对同序的。
+
+   result 是后端压过的一句话（core/tools.py 的 tool_result）：完整结果可能有两万字，
+   全塞进渲染进程只为显示一行字，不值当。 */
+function finishToolCall(msg) {
+  const card = toolCards.shift();
+  if (!card) return;
+  finishCard(card, (msg && msg.result) || "", msg && msg.failed);
+  scrollDown();
+}
+
+/* 新一轮开始前把上一轮的卡片都收掉：万一有哪张没等到 tool_end
+   （模型出错、用户中途取消），别让它一直转下去，看着像卡死了。 */
+function resetToolCalls() {
+  for (const card of toolCards) card.classList.add("is-done");
+  toolCards = [];
 }
 
 let statusFadeTimer = 0;
@@ -288,9 +631,19 @@ let replyText = "";
 let lastFlush = 0;
 let lastPulse = 0;
 
+/* 助手气泡等到真有内容才建。
+   原来是在 sendMessage 里就先建一个空气泡占位，可模型要是先调工具再回话，
+   工具卡片就只能排在那个气泡下面 —— 最后答案反而显示在"我调了什么"的上面，
+   顺序整个反了。error / stopped / done 三条分支本来就有兜底，懒建是安全的。 */
+function ensureReply() {
+  if (!reply) reply = addBubble("", { role: "bot" });
+  return reply;
+}
+
 function onWsEvent(msg) {
   switch (msg.type) {
     case "start":
+      resetToolCalls();
       setBusy(true);
       setStatus("正在思考…");
       break;
@@ -300,26 +653,32 @@ function onWsEvent(msg) {
       if (now - lastPulse >= 90) { lastPulse = now; pulseMouth(); }
       if (now - lastFlush >= THROTTLE_MS) {
         lastFlush = now;
-        if (reply) setBubbleText(reply, replyText);
+        setBubbleText(ensureReply(), replyText);
         scrollDown();
       }
       break;
     }
     case "tool_start":
       state.toolTask = msg.name;
-      setStatus(`正在用「${msg.name}」…`);
+      setStatus(`正在用「${msg.label || msg.name}」…`);
+      addToolCall(msg);
       break;
     case "tool_end":
       state.toolTask = null;
       setStatus("");
+      finishToolCall(msg);
+      break;
+    case "tool_ask":
+      // 模型想动真格了，等用户点头（后端那头的 approve 回调正卡在这儿）
+      askToolPermission(msg);
       break;
     case "done":
       replyText = msg.text || replyText;
-      if (reply) setBubbleText(reply, replyText || "（没有内容）");
+      setBubbleText(ensureReply(), replyText || "（没有内容）");
       finishTurn();
       break;
     case "stopped":
-      if (reply) setBubbleText(reply, (msg.text || replyText || "") + "\n\n_（已停止）_");
+      setBubbleText(ensureReply(), (msg.text || replyText || "") + "\n\n_（已停止）_");
       finishTurn();
       break;
     case "error":
@@ -371,7 +730,7 @@ function sendMessage() {
   replyText = "";
   lastFlush = 0;
   lastPulse = 0;
-  reply = addBubble("", { role: "bot" });
+  reply = null;              // 懒建，见 ensureReply()
   setBusy(true);
   setStatus("正在思考…");
   scrollDown();
@@ -699,6 +1058,70 @@ async function pollPanel() {
 }
 
 // ───────────────────────── 浮层：引导 / 设置 ─────────────────────────
+
+/* 危险工具的审批弹窗。
+   后端的 approve 回调正 await 在这一句回答上，用户不点，这一轮就卡着
+   （最多等 5 分钟，超时按拒绝算）。所以这个弹窗必须能"只靠键盘/只靠鼠标"
+   关掉，而且点拒绝和点允许走同一条路。 */
+let toolAskId = null;
+
+function askToolPermission(msg) {
+  const id = String(msg.id || "");
+  if (!id || toolAskId === id) return;
+  toolAskId = id;
+
+  const answer = (ok) => {
+    if (toolAskId !== id) return;        // 已经答过了（比如连点两下）
+    toolAskId = null;
+    try {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: "tool_decision", id, ok }));
+      }
+    } catch { /* 连接断了就算了，后端那边也会按拒绝收尾 */ }
+    closeOverlay();
+  };
+
+  showSheet((sheet) => {
+    sheet.classList.add("tool-ask");
+
+    const title = document.createElement("h2");
+    title.textContent = `可以${msg.label || msg.name}吗？`;
+    sheet.appendChild(title);
+
+    const note = document.createElement("div");
+    note.className = "hint";
+    note.textContent = "八千代想在你电脑上做这件事，需要你点一下头。";
+    sheet.appendChild(note);
+
+    const box = document.createElement("div");
+    box.className = "tool-ask-preview";
+    const code = document.createElement("code");
+    code.textContent = String(msg.preview || msg.name || "");
+    box.appendChild(code);
+    sheet.appendChild(box);
+
+    const actions = document.createElement("div");
+    actions.className = "tool-ask-actions";
+
+    const no = document.createElement("button");
+    no.className = "btn ghost grow";
+    no.type = "button";
+    no.textContent = "拒绝";
+    no.onclick = () => answer(false);
+
+    const yes = document.createElement("button");
+    yes.className = "btn primary grow";
+    yes.type = "button";
+    yes.textContent = "允许";
+    yes.onclick = () => answer(true);
+
+    actions.append(no, yes);
+    sheet.appendChild(actions);
+
+    // 默认焦点给「拒绝」：手滑敲回车不该等于放行
+    setTimeout(() => no.focus(), 30);
+  });
+}
 
 /* 关浮层：先挂 .is-closing 把退出动画播一遍（进入是 sheet-in/scrim-in，出去反着来），
    动画放完再真的收起来 —— 退出用 sheet 的 animationend 当信号，另配兜底定时器
@@ -1103,6 +1526,129 @@ function openSettings() {
     };
     sheet.appendChild(temp);
 
+    // 工具：档位 + 动手前确认 + 当前挂着哪些工具（目录从后端读，别在前端抄一份）
+    const toolsSect = document.createElement("div");
+    toolsSect.className = "sect";
+    const toolCfg = state.cfg?.tools || {};
+    toolsSect.innerHTML = `
+      <div class="sect-title">工具</div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">能力范围</div>
+          <div class="desc" id="tool-profile-desc">—</div>
+        </div>
+      </div>
+      <div class="seg" id="tool-profile" role="radiogroup" aria-label="工具档位">
+        <button class="seg-btn" data-tool-profile="off" role="radio" aria-checked="false">关闭</button>
+        <button class="seg-btn" data-tool-profile="safe" role="radio" aria-checked="false">安全</button>
+        <button class="seg-btn" data-tool-profile="full" role="radio" aria-checked="false">完全</button>
+      </div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">动手前先问我</div>
+          <div class="desc">写文件、改文件、执行命令这类操作，弹窗让你点头之后才做</div>
+        </div>
+        <div class="switch ${toolCfg.confirm === false ? "" : "on"}" id="tool-confirm" role="switch"
+             aria-checked="${toolCfg.confirm === false ? "false" : "true"}"
+             aria-label="动手前先问我" tabindex="0"></div>
+      </div>
+      <div class="tool-list" id="tool-list"><div class="hint">正在读工具列表…</div></div>`;
+    sheet.appendChild(toolsSect);
+
+    const TOOL_PROFILE_DESC = {
+      off: "八千代只会聊天，不碰你的电脑。",
+      safe: "能联网搜索、看时间、翻记忆、截图、读剪贴板、读文件。不会改任何东西。",
+      full: "在上面那些之外，还能写文件、改文件、打开路径、执行命令（默认每次都要你点头）。",
+    };
+    let toolCatalog = [];
+    const profileDesc = toolsSect.querySelector("#tool-profile-desc");
+    const toolList = toolsSect.querySelector("#tool-list");
+
+    /* 每次 POST 都从 state.cfg.tools 现读，只挑配置字段 ——
+       /api/tools 的返回里还带着 catalog，整包塞回配置会被 pydantic 拒掉。 */
+    const toolPayload = (patch) => {
+      const cur = state.cfg?.tools || {};
+      return {
+        profile: cur.profile ?? "safe",
+        allow: cur.allow ?? [],
+        deny: cur.deny ?? [],
+        confirm: cur.confirm !== false,
+        ...patch,
+      };
+    };
+
+    const paintTools = () => {
+      const now = (state.cfg?.tools?.profile) || "safe";
+      profileDesc.textContent = TOOL_PROFILE_DESC[now] || TOOL_PROFILE_DESC.safe;
+      for (const btn of toolsSect.querySelectorAll("[data-tool-profile]")) {
+        const on = btn.dataset.toolProfile === now;
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-checked", on ? "true" : "false");
+      }
+
+      if (!toolCatalog.length) {
+        toolList.innerHTML = `<div class="hint">读不到工具列表。</div>`;
+        return;
+      }
+      // 分两栏列：安全的 / 要确认的。关闭档位时整列都标成灰的。
+      const bucket = (safe) => toolCatalog.filter((t) => t.safe === safe);
+      const row = (t) => {
+        const need = t.needs_confirm ? `<span class="tag warn">要确认</span>` : "";
+        return `<li class="${now === "off" ? "off" : ""}">
+          <span class="n">${escapeHtml(t.label)}</span>
+          <span class="d">${escapeHtml(t.description.split("。")[0])}</span>${need}</li>`;
+      };
+      const safeRows = bucket(true).map(row).join("");
+      const riskyRows = bucket(false).map(row).join("");
+      toolList.innerHTML = `
+        <div class="tool-group">安全工具<span class="sub">${now === "off" ? "当前关闭" : "默认开启"}</span></div>
+        <ul class="tool-items">${safeRows}</ul>
+        <div class="tool-group">需要你同意的工具<span class="sub">${now === "full" ? "已开启" : "当前关闭"}</span></div>
+        <ul class="tool-items">${riskyRows}</ul>`;
+    };
+
+    for (const btn of toolsSect.querySelectorAll("[data-tool-profile]")) {
+      btn.onclick = async () => {
+        const next = btn.dataset.toolProfile;
+        try {
+          const res = await api("/api/config", { method: "POST", body: { tools: toolPayload({ profile: next }) } });
+          state.cfg.tools = res.tools;
+        } catch { setStatus("改不了工具档位", true); return; }
+        paintTools();
+        setStatus(`工具档位：${next === "off" ? "关闭" : next === "safe" ? "安全" : "完全"}`);
+      };
+    }
+
+    const confirmToggle = toolsSect.querySelector("#tool-confirm");
+    const flipConfirm = async () => {
+      const on = !confirmToggle.classList.contains("on");
+      const flip = (state) => {
+        confirmToggle.classList.toggle("on", state);
+        confirmToggle.setAttribute("aria-checked", state ? "true" : "false");
+      };
+      flip(on);
+      try {
+        const res = await api("/api/config", { method: "POST", body: { tools: toolPayload({ confirm: on }) } });
+        state.cfg.tools = res.tools;
+      } catch {
+        flip(!on);                      // 存不上就把开关拨回去，别骗用户
+        setStatus("改不了这个开关", true);
+      }
+    };
+    confirmToggle.onclick = flipConfirm;
+    confirmToggle.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flipConfirm(); }
+    };
+
+    (async () => {
+      try {
+        const data = await api("/api/tools");
+        toolCatalog = data.catalog || [];
+      } catch { toolCatalog = []; }
+      paintTools();
+    })();
+    paintTools();
+
     // 换密钥 / 改配置
     const editTitle = document.createElement("div");
     editTitle.className = "sect-title";
@@ -1236,6 +1782,7 @@ function openSetup() {
               <h3>第三方组件</h3>
               <ul class="legal-libs">
                 <li><span class="n">Electron</span><span class="l">MIT</span></li>
+                <li><span class="n">Inter</span><span class="l">OFL-1.1</span></li>
                 <li><span class="n">PixiJS 8.13.1</span><span class="l">MIT</span></li>
                 <li><span class="n">untitled-pixi-live2d-engine 1.4.0</span><span class="l">MIT</span></li>
                 <li><span class="n">LiteLLM</span><span class="l">MIT</span></li>

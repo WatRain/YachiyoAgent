@@ -5,8 +5,31 @@
  *   · 两套配色由 <html data-theme="dark|light"> 切换，全部走下面这批令牌
  *     —— 改配色只改令牌，别在组件里写死颜色
  *   · 玻璃三件套：半透明填充 + backdrop-filter 模糊 + 顶部高光边（rim）
- *   · 字体分工：标题/名字用衬线（宋体系，月见的书卷气），正文用无衬线
+ *   · 字体分工：标题/名字与正文同为无衬线，标题靠字重、字号、字距拉开层次
  */
+
+/* ───────────────────────── 字体 ─────────────────────────
+   随包分发 Inter（SIL OFL 1.1，见 renderer/fonts/OFL.txt）。
+   为什么是无衬线：整套界面不再用宋体系做标题 —— 标题和正文的区分靠字重、
+   字号和字距，不靠字体家族。Inter 中性、为屏幕优化、字重齐全，做大字标题干净，不花哨。
+   只收了 latin / latin-ext 两个子集（unicode-range 卡着），中文照旧落到后面的中文栈。
+   字体文件走本机 127.0.0.1 的静态目录，CSP 的 default-src 'self' 就够，不用放开外域。 */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 /* ───────────────────────── 设计令牌 · 深色（默认） ───────────────────────── */
 
@@ -104,7 +127,8 @@
   --stage-width: 380px;
   --stage-height: 680px;
 
-  --font-display: "Source Han Serif SC", "Noto Serif SC", "Songti SC", STSong, SimSun, serif;
+  /* 拉丁字形走随包的 Inter，中文落到思源黑体那一串 —— 一个令牌改掉全部标题/名字 */
+  --font-display: "Inter", "Source Han Sans SC", "Noto Sans SC", "PingFang SC", MiSans, "HarmonyOS Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
   --font-ui: MiSans, "HarmonyOS Sans SC", "Microsoft YaHei UI", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
 }
@@ -604,7 +628,110 @@ body {
   color: var(--danger);
 }
 
-/* 气泡里的 Markdown */
+/* ── 工具卡片 ──────────────────────────────────────────────
+   模型调工具时插在对话流里的一张小便签：工具的中文名 + 它到底执行了什么。
+
+   跟气泡刻意做得不一样：气泡是"谁在说话"，这张卡是"它在动手"，
+   所以更扁、更小、带一个会呼吸的点，扫一眼就能跟对话分开。
+   状态变化一律走 transition（见文件末尾的动效约定）。 */
+.tool-call {
+  align-self: flex-start;
+  max-width: 84%;
+  padding: 9px 13px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: var(--r-md);
+  border-bottom-left-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  animation: bubble-in var(--normal) var(--ease);
+  /* 干完活之后整体往后退一格：边框变淡、底色褪掉、点转绿 */
+  transition:
+    border-color var(--normal) var(--ease),
+    background var(--normal) var(--ease);
+}
+.tool-call-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  line-height: 1.2;
+}
+.tool-call-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.tool-call-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: dot-pulse 1.5s ease-in-out infinite;
+  transition:
+    background var(--normal) var(--ease),
+    box-shadow var(--normal) var(--ease);
+}
+.tool-call-cmd {
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border-radius: var(--r-sm);
+  background: var(--code-bg);
+}
+.tool-call-cmd code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+  /* 命令可能是好几行（比如一段带管道的脚本），换行显示比横向滚动好读；
+     break-all 顺手挡住超长路径把卡片撑破 */
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-call.is-done {
+  border-color: var(--hairline);
+  background: transparent;
+}
+.tool-call.is-done .tool-call-label {
+  font-weight: 500;
+  color: var(--text-2);
+}
+.tool-call.is-done .tool-call-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+  animation: none;
+}
+
+/* 干完了，把「拿回来了什么」写上一行。
+   比命令那行更轻 —— 命令是"我要动手了"（用户得看清、必要时拦一下），
+   结果是"拿了这么点东西"，扫一眼有数就行。 */
+.tool-call-result {
+  margin: 7px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+  /* 结果里常有很长的 URL 或路径，断在任意位置也好过把卡片顶宽 */
+  overflow-wrap: anywhere;
+}
+
+/* 没成的那次用暖色收尾。放在 .is-done 之后是故意的：
+   卡片总是先被加上 is-done，再看有没有失败，靠顺序让失败态盖住完成态。 */
+.tool-call.is-failed {
+  border-color: color-mix(in srgb, var(--warn) 34%, transparent);
+  background: color-mix(in srgb, var(--warn) 7%, transparent);
+}
+.tool-call.is-failed .tool-call-label {
+  color: var(--warn);
+}
+.tool-call.is-failed .tool-call-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent);
+}
+.tool-call.is-failed .tool-call-result {
+  color: var(--text-2);
+}
+
+/* 气泡里的 Markdown（渲染器在 app.js 的 mdToHtml，支持到什么程度看那里） */
 .bubble p { margin: 0 0 8px 0; }
 .bubble p:last-child { margin-bottom: 0; }
 .bubble code {
@@ -614,24 +741,47 @@ body {
   font-family: var(--font-mono);
   font-size: 12.5px;
 }
-.bubble pre {
-  background: var(--code-bg);
-  padding: 12px 14px;
-  border-radius: var(--r-sm);
-  overflow-x: auto;
-  margin: 8px 0;
-  border: 1px solid var(--hairline);
-}
-.bubble pre code { background: none; padding: 0; }
 .bubble a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.bubble del { opacity: .62; }
 .bubble ul, .bubble ol { margin: 6px 0; padding-left: 22px; }
 .bubble li { margin: 2px 0; }
-.bubble h1, .bubble h2, .bubble h3 {
+.bubble li > ul, .bubble li > ol { margin: 2px 0; }
+/* 任务列表：li 里第一个孩子是复选框时，把 ul 自带的圆点收掉（不然点 + 框并排） */
+.bubble li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
+.bubble li > input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 12px;
+  height: 12px;
+  margin: 0 6px 0 0;
+  vertical-align: -1px;
+  border: 1px solid var(--glass-border-hi);
+  border-radius: 4px;
+  background: var(--code-bg);
+}
+.bubble li > input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.bubble li > input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--accent-ink);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.bubble h1, .bubble h2, .bubble h3, .bubble h4, .bubble h5, .bubble h6 {
   font-family: var(--font-display);
   margin: 10px 0 6px;
   font-size: 15.5px;
   letter-spacing: .04em;
+  line-height: 1.35;
 }
+.bubble h5, .bubble h6 { font-size: 13.5px; color: var(--text-2); }
 .bubble blockquote {
   margin: 6px 0;
   padding-left: 10px;
@@ -639,6 +789,79 @@ body {
   color: var(--text-2);
 }
 .bubble hr { border: none; border-top: 1px solid var(--hairline); margin: 10px 0; }
+
+/* 表格：用 GitHub 那套 —— 表格自己按「不折行」的宽度铺开（display: block + width: max-content），
+   装不下就交给外层 .md-table 横向滚。
+   ★ 不能让表格去折行适配气泡宽度：中文几乎每个字之间都能断行，min-content 只有一字宽，
+     列多的表会被压成每行一两个字、竖着长一屏。窄表靠 min-width: 100% 撑满气泡。 */
+.bubble .md-table { margin: 8px 0; overflow-x: auto; }
+.bubble table {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.bubble th, .bubble td {
+  border: 1px solid var(--hairline);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+.bubble th { background: var(--code-bg); font-weight: 600; }
+.bubble .ta-center { text-align: center; }
+.bubble .ta-right { text-align: right; }
+
+/* 代码块：底色 / 圆角 / 边框都挂在外层 .code-block，顶上一行是语言标签 + 复制按钮。
+   ★ 语言标签用 --text-2 而不是 --text-3：它压在 --code-bg 上，深色下 --text-3 只有 4.41:1。 */
+.bubble .code-block {
+  margin: 8px 0;
+  background: var(--code-bg);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.bubble .code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+  padding: 3px 8px 3px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.bubble .code-lang {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.bubble .code-copy {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease),
+              border-color var(--fast) var(--ease);
+}
+.bubble .code-copy:hover { color: var(--text); background: var(--glass-fill); border-color: var(--glass-border); }
+.bubble .code-copy.bad { color: var(--danger); }
+.bubble pre {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 12px 14px;
+  margin: 0;
+  overflow-x: auto;
+}
+.bubble pre code { background: none; padding: 0; }
 
 /* ★ 状态行用 --text-2：它压在聊天卡片上（卡片底下是极光），深色下 --text-3
    实测只有 4.32:1，卡在 WCAG 4.5 的线上；而且这行会显示"连接断了"这类要紧的话。 */
@@ -1663,6 +1886,71 @@ body.oobe .titlebar .seg-theme { display: none; }
      但"按下去缩一下""面板滑进来"这种位移最招人不适，关掉也不会少一个状态。 */
   :active { transform: none !important; }
 }
+
+/* ───────────────────────── 工具 ───────────────────────── */
+
+/* 工具清单：两栏（安全的 / 要确认的）。用 <ul> 但不用 .legal-sec 那套点号。 */
+.tool-list { margin-top: var(--gap-sm); }
+.tool-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 5px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.tool-group .sub { font-size: 10.5px; color: var(--text-3); }
+.tool-items { display: flex; flex-direction: column; gap: 3px; }
+.tool-items li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  /* 底色 + 描边都要：--seg-on 在浅色主题里是 rgba(255,255,255,.95)，
+     单靠它压在 82% 白的弹出层上等于没有（同 .legal-libs 的处理）。 */
+  border: 1px solid var(--glass-border);
+  background: var(--seg-on);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.tool-items li::before { content: none; }
+.tool-items li + li { margin-top: 0; }
+/* 档位关掉时整列压暗 —— 只是"当前不生效"，不是禁用，所以还能读 */
+.tool-items li.off { opacity: .5; }
+.tool-items .n { flex: none; min-width: 5.5em; }
+.tool-items .d { flex: 1 1 auto; min-width: 0; color: var(--text-3); font-size: 10.5px; }
+.tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--glass-border);
+  font-size: 10px;
+  background: var(--seg-on);
+  color: var(--text-2);
+}
+.tag.warn { color: var(--accent); }
+
+/* 危险工具的审批弹窗。刻意做窄、做矮：它是个"拦一下"的对话框，
+   不是又一个设置页，扫一眼就能决定。 */
+.sheet.tool-ask { width: min(420px, 92vw); }
+.sheet.tool-ask h2 { margin-bottom: 4px; }
+.tool-ask-preview {
+  margin: var(--gap-md) 0;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--code-bg);
+  overflow-x: auto;
+}
+.tool-ask-preview code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tool-ask-actions { display: flex; gap: var(--gap-sm); }
 
 /* ───────────────────────── 动效约定（改之前先读这段） ─────────────────────────
  *
