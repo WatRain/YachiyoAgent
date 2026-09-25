@@ -1348,9 +1348,21 @@ function openSetup() {
       nextBtn.disabled = blocked();
       panes[step].scrollTop = 0;
     };
+    // 过许可页的那一刻往 config.json 记一笔「何时同意了哪一版」。
+    // 只记一次；写失败不拦人 —— 同意是当场就生效的，这只是在留证据。
+    let consentLogged = false;
+    const logConsent = () => {
+      if (consentLogged) return;
+      consentLogged = true;
+      api("/api/config", {
+        method: "POST",
+        body: { consent: { version: LEGAL_VERSION, at: new Date().toISOString() } },
+      }).catch(() => { consentLogged = false; });
+    };
     const go = (next) => {
       // 往前走要过许可页；往回走永远放行，不然一勾错就卡死在那一页了
       if (blocked() && next > step) return;
+      if (step === SETUP_AGREE_STEP && next > step) logConsent();
       step = Math.max(0, Math.min(lastStep, next));
       paint();
     };

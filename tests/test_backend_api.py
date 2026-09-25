@@ -341,6 +341,18 @@ def test_config_only_accepts_editable_fields(client):
     assert client.post("/api/config", json={"temperature": "很热"}).status_code == 400
 
 
+def test_consent_is_recorded_through_the_api(client):
+    """许可页勾完同意，前端走的就是这个接口：能落盘、能读回、乱写要拦。"""
+    at = "2026-09-25T12:30:00+08:00"
+    saved = client.post("/api/config", json={"consent": {"version": 1, "at": at}})
+
+    assert saved.status_code == 200
+    assert saved.json()["consent"] == {"version": 1, "at": at}
+    assert client.get("/api/config").json()["consent"] == {"version": 1, "at": at}
+
+    assert client.post("/api/config", json={"consent": {"version": "第一版"}}).status_code == 400
+
+
 def test_memories_and_reminders_roundtrip(client):
     client.post("/api/memories", json={"key": "名字", "value": "八千代", "confidence": 0.9})
     memories = client.get("/api/memories").json()["memories"]

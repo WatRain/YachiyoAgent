@@ -10,10 +10,12 @@ import uuid
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from core.config import (
     SCHEMA_VERSION,
     AppConfig,
+    ConsentRecord,
     ProviderConfig,
     get_provider,
     load_config,
@@ -147,3 +149,43 @@ def test_unknown_fields_are_ignored():
     """用户手改文件加错字，不该让整个配置失效。"""
     cfg = AppConfig.model_validate({"schema_version": 1, "som_typo": 123})
     assert cfg.schema_version == 1
+
+
+# ─────────────────────────── 同意记录 ───────────────────────────
+
+
+def test_consent_defaults_to_never_agreed():
+    """没写过就是「从没同意过」：version=0、时间为空。"""
+    cfg = AppConfig()
+    assert cfg.consent.version == 0
+    assert cfg.consent.at == ""
+
+
+def test_consent_roundtrips(isolated_data_dir):
+    cfg = AppConfig()
+    cfg.consent = ConsentRecord(version=3, at="2026-09-25T12:30:00+08:00")
+
+    save_config(cfg)
+    again = load_config()
+
+    assert again.consent.version == 3
+    assert again.consent.at == "2026-09-25T12:30:00+08:00"
+
+
+def test_old_config_without_consent_loads_as_never_agreed(isolated_data_dir):
+    """老版本的 config.json 里没有 consent，升上来要当成「没同意过」。"""
+    (isolated_data_dir / "config.json").write_text(
+        json.dumps({"schema_version": 1, "active_provider": "deepseek"}),
+        encoding="utf-8",
+    )
+
+    cfg = load_config()
+    assert cfg.consent.version == 0
+    assert cfg.active_provider == "deepseek"        # 老字段照常读出来
+    assert cfg.schema_version == SCHEMA_VERSION     # 迁移后写的是新版本号
+
+
+def test_consent_version_must_be_a_number():
+    """手改文件把版本号写成文字，要报错而不是悄悄吞掉。"""
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"consent": {"version": "第一版"}})

@@ -24,7 +24,7 @@ from core.paths import config_path
 log = logging.getLogger(__name__)
 
 # 改结构时 +1，并在 _migrate() 里写升级逻辑
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 Protocol = Literal["openai", "anthropic", "gemini", "custom"]
 
@@ -40,6 +40,21 @@ class ProviderConfig(BaseModel):
     supports_stream: bool = True
     is_builtin: bool = False     # 来自预设（仅用于 UI 上打标记，行为无差别）
     extra_headers: dict[str, str] = Field(default_factory=dict)
+
+
+class ConsentRecord(BaseModel):
+    """用户对隐私政策 / 许可条款的同意记录。
+
+    为什么单独存一条，而不是「走完了引导就算同意」：这个程序是要发给别人用的，
+    得能拿得出「他何时同意了哪一版」。条款有实质改动时把前端那个
+    LEGAL_VERSION（desktop/renderer/app.js）和这里的 version 一起 +1，
+    据此就能判断要不要重新征求同意。
+
+    默认值 = 从没同意过 —— 老配置文件升上来就是这个状态。
+    """
+
+    version: int = 0
+    at: str = ""        # 同意时间，ISO 8601（带时区）
 
 
 class AppConfig(BaseModel):
@@ -65,6 +80,10 @@ class AppConfig(BaseModel):
     # （desktop/main.js 的 pet-window.json），那属于界面状态，不进这里。
     live2d_detached: bool = False
 
+    # 隐私政策 / 许可条款的同意记录（见 ConsentRecord）。
+    # 这是**证据**，不是开关：界面上该拦还是拦，不看这个字段。
+    consent: ConsentRecord = Field(default_factory=ConsentRecord)
+
 
 def _migrate(raw: dict) -> AppConfig:
     """把任意历史版本的配置升到当前版本。"""
@@ -75,8 +94,13 @@ def _migrate(raw: dict) -> AppConfig:
         raw.setdefault("providers", [])
         raw.setdefault("active_provider", "")
 
+    if version < 2:
+        # 1 -> 2：加了「同意记录」。字段自带默认值，老配置其实不转换也能读，
+        # 这里显式补一条是想把升级路径留在纸面上（也是以后加字段的样板）。
+        raw.setdefault("consent", {})
+
     # 以后加字段的写法（示例）：
-    # if version < 2:
+    # if version < 3:
     #     raw["new_field"] = 默认值
 
     raw["schema_version"] = SCHEMA_VERSION
