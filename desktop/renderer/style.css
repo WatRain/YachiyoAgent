@@ -1276,7 +1276,118 @@ body.oobe .titlebar .seg-theme { display: none; }
   padding: 0;
   gap: 0;
   overflow: hidden;
+  /* 引导卡自己的进场：从**中心**扩散开，而不是默认那张从下往上浮的 sheet-in。
+     别在 .sheet 上再叠 filter: blur —— 它自己挂着 backdrop-filter，
+     叠上去会让这 420ms 每帧重算一次背板模糊，代价不划算。 */
+  animation: setup-in var(--slow) var(--spring) both;
 }
+@keyframes setup-in {
+  from { opacity: 0; transform: scale(.9); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 第一步（欢迎）是"光板"：顶栏和底栏整条收掉，只剩正中的字、三张说明卡和一个
+   圆按钮 —— 照小米 HyperOS 那个开机欢迎页的样子。切到第二步时顶栏底栏会因为
+   display 从 none 变回来而重播一次 setup-chrome-in，不是硬邦邦地弹出来。 */
+.sheet.setup[data-step="0"] .setup-top,
+.sheet.setup[data-step="0"] .setup-foot { display: none; }
+.setup-top,
+.setup-foot { animation: setup-chrome-in var(--normal) var(--ease); }
+@keyframes setup-chrome-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* 欢迎页：整块在正文区里居中。
+   步 0 的顶栏底栏是 display:none，正文区会高出一截 —— 所以这里塞得下
+   大字 + 说明 + 三张卡 + 圆按钮，不会滚。间距收紧是给三张卡腾地方。 */
+.setup-pane[data-step="0"] {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: clamp(14px, 2.8vh, 24px);
+}
+/* 三张卡要占满宽度、文字左对齐 —— 不然会被 align-items:center 缩成内容宽、
+   里头的字还跟着继承上面的 text-align:center */
+.setup-pane[data-step="0"] .setup-points {
+  width: 100%;
+  max-width: 30em;
+  text-align: left;
+}
+.setup-hero { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.setup-hero-eyebrow {
+  font-size: 13px;
+  letter-spacing: .5em;
+  text-indent: .5em;                 /* 抵消字距在行尾多加的那半格 */
+  /* 用 --text-2 而不是 --text-3：浅色主题下 13px 的 --text-3 实测只有 4.49:1，
+     卡在 WCAG 4.5:1 门槛下面（深色主题 5.01:1 才刚好过）。 */
+  color: var(--text-2);
+}
+.setup-hero-word {
+  font-family: var(--font-display);
+  font-size: clamp(34px, 6vw, 52px);
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-indent: .1em;
+  color: var(--text);
+}
+.setup-hero-note { max-width: 32em; margin: 0 auto; font-size: 12px; color: var(--text-3); }
+/* 那颗圆按钮：和 .btn.primary 同一套强调色，只是做成正圆 */
+.setup-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(150deg, var(--accent-2), var(--accent));
+  color: var(--accent-ink);
+  cursor: pointer;
+  box-shadow: 0 10px 26px -12px color-mix(in srgb, var(--accent) 75%, transparent);
+  transition: transform var(--press) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.setup-go:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px -12px color-mix(in srgb, var(--accent) 85%, transparent);
+}
+.setup-go:active { transform: scale(.94); }
+.setup-go svg { display: block; }
+
+/* 点这颗圆按钮离开欢迎页：从箭头的中心把下一页整块「揭开」。
+   为什么用圆形裁切而不是两页对淡：从箭头那一点长出来是这次转场的全部意思，
+   对淡表达不了"扩散"。原点 / 半径由 app.js 量好塞进 --rv-*。
+   这一层是临时的 —— 动画演完 app.js 就撤掉 .is-revealing，裁切随之失效，
+   既不留在状态里、也不影响后面几步的普通翻页。 */
+.sheet.setup.is-revealing .setup-pane.is-active {
+  transform: none;
+  transition: none;                 /* 透明度和位移都别插手，这一次只由裁切说话 */
+  animation: setup-reveal var(--slow) var(--ease) both;
+}
+@keyframes setup-reveal {
+  from { clip-path: circle(0 at var(--rv-x) var(--rv-y)); }
+  to   { clip-path: circle(var(--rv-r) at var(--rv-x) var(--rv-y)); }
+}
+/* 旧页原地淡掉：别按 .is-before 往左滑，那会和扩散抢注意力。 */
+.sheet.setup.is-revealing .setup-pane.is-before {
+  transform: none;
+  transition: none;
+  animation: setup-leave var(--normal) var(--ease) both;
+}
+@keyframes setup-leave { from { opacity: 1; } to { opacity: 0; } }
+/* 箭头自己更快地放大淡出 —— 像被它自己扩散出去的那一圈带走的。
+   比旧页（--normal）先走完，扩散刚铺开它就已经不在了。 */
+.sheet.setup.is-revealing .setup-go {
+  pointer-events: none;
+  animation: setup-go-out var(--normal) var(--ease-in) both;
+}
+@keyframes setup-go-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.4); }
+}
+/* 扩散期间把新页的分层入场（下面 .setup-pane.is-active > * 的 setup-rise）按住。
+   不按住的话两个动效会互相抵消：圆还没铺到，文字自己先淡进来了，
+   看上去就不像「从箭头里长出来」。按住之后圆内是已经完整的一页，只有裁切在动。
+   这个类不跟 .is-revealing 一起撤 —— 动画名从 none 变回 setup-rise 会重放一次入场。 */
+.sheet.setup .setup-pane.no-rise > * { animation: none; }
 
 /* 顶部：品牌 + 步骤点 */
 .setup-top {

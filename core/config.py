@@ -70,7 +70,9 @@ class AppConfig(BaseModel):
     temperature: float = 0.8
 
     # UI 偏好
-    theme: str = "dark"
+    # 默认跟随系统：第一次打开不该被硬塞一套配色。
+    # 这是**新装**的默认值 —— 老配置里存着 "dark" 的会保持深色，不会被改。
+    theme: str = "system"
     # 角色物理（头发/衣摆的摆动）。实测很吃帧预算：开着约 36fps，关掉能到 60fps。
     # 但界面上已经不提供这个开关了 —— 关掉之后角色会僵在那儿，用户说太怪。
     # 字段留着是为了兼容老配置，主界面不再读它；调试要关物理走 pet.html 的 ?physics=0。

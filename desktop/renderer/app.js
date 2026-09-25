@@ -27,7 +27,7 @@ const state = {
   secrets: null,
   busy: false,
   toolTask: null,
-  themeMode: "dark",        // system / light / dark，与后端 config.theme 同步
+  themeMode: "system",      // system / light / dark，与后端 config.theme 同步
   petDetached: false,       // 角色是不是已经脱离到桌面浮窗（与 config.live2d_detached 同步）
   panelBooted: false,       // 角色面板是不是已经放过出来了（引导期间先扣着，见 ensurePanel）
 };
@@ -68,7 +68,7 @@ function resolveTheme(mode) {
 }
 
 function applyTheme(mode, { persist = false } = {}) {
-  const want = THEME_MODES.includes(mode) ? mode : "dark";
+  const want = THEME_MODES.includes(mode) ? mode : "system";
   const resolved = resolveTheme(want);
   state.themeMode = want;
   document.documentElement.dataset.theme = resolved;
@@ -981,7 +981,7 @@ function openSettings() {
       btn.onclick = () => applyTheme(btn.dataset.themeSet, { persist: true });
     }
     sheet.appendChild(look);
-    applyTheme(state.themeMode || state.cfg?.theme || "dark");   // 把当前选中态刷到刚建好的开关上
+    applyTheme(state.themeMode || state.cfg?.theme || "system");   // 把当前选中态刷到刚建好的开关上
 
     // 角色：显示的是模型目录名。模型是美术作品，版权与代码无关 ——
     // 用官方样例模型分发时，版权声明就该出现在用户看得到的地方。
@@ -1178,17 +1178,20 @@ function openSetup() {
     sheet.classList.add("setup");
     sheet.innerHTML = `
       <div class="setup-top">
-        <div class="setup-brand"><span class="mark">月</span><span class="setup-brand-text">月见八千代</span></div>
+        <div class="setup-brand"><span class="setup-brand-text">YachiyoAgent</span></div>
         <div class="setup-dots" id="setup-dots" aria-hidden="true">
           ${SETUP_STEPS.map(() => `<span class="setup-dot"></span>`).join("")}
         </div>
       </div>
       <div class="setup-body">
         <section class="setup-pane" data-step="0">
-          <h2 class="setup-title">欢迎，先把八千代叫醒</h2>
-          <div class="hint">
-            填一个你自己的模型服务（任何 OpenAI 兼容的都行）。<br />
-            API Key 直接存进 ${state.secrets?.backend || "系统凭据管理器"}，程序里不留明文，也不经过我们。
+          <h2 class="setup-hero">
+            <span class="setup-hero-eyebrow">欢迎来到</span>
+            <span class="setup-hero-word">YachiyoAgent</span>
+          </h2>
+          <div class="hint setup-hero-note">
+            先花一分钟接上你自己的模型服务。<br />
+            密钥直接存进 ${state.secrets?.backend || "系统凭据管理器"}，程序里不留明文，也不经过我们。
           </div>
           <div class="setup-points">
             <div class="setup-point"><span class="ic">🔒</span><div>
@@ -1201,6 +1204,12 @@ function openSetup() {
               <div class="t">角色随包分发</div>
               <div class="d">Live2D 模型已经装好了，配完就能看到她动起来。</div></div></div>
           </div>
+          <button class="setup-go" type="button" aria-label="开始设置">
+            <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+              <path d="M5 12h13M12.5 5.5 19 12l-6.5 6.5" fill="none" stroke="currentColor"
+                    stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
         </section>
         <!-- 隐私与许可。必须勾了下面那个框才能继续（见 paint() 里对 setup-next 的置灰）。
              这份文案是照着程序的实际行为写的，改代码时记得回头改这里：
@@ -1326,6 +1335,7 @@ function openSetup() {
     const dots = [...sheet.querySelectorAll(".setup-dot")];
     const backBtn = sheet.querySelector("#setup-back");
     const nextBtn = sheet.querySelector("#setup-next");
+    const goBtn = sheet.querySelector(".setup-go");
     const agreeBox = sheet.querySelector("#setup-agree");
     const formActions = actionsHost.querySelector(".form-actions");
     let step = 0;
@@ -1335,6 +1345,8 @@ function openSetup() {
     const blocked = () => step === SETUP_AGREE_STEP && !agreeBox.checked;
 
     const paint = () => {
+      // 第一步是"光板"欢迎页：CSS 靠这个属性把顶栏和底栏整条收掉
+      sheet.dataset.step = String(step);
       panes.forEach((pane, i) => {
         pane.classList.toggle("is-active", i === step);
         pane.classList.toggle("is-before", i < step);
@@ -1359,15 +1371,62 @@ function openSetup() {
         body: { consent: { version: LEGAL_VERSION, at: new Date().toISOString() } },
       }).catch(() => { consentLogged = false; });
     };
+    // 离开欢迎页那一下，从箭头的中心把下一页「揭开」（动画在 style.css 的 setup-reveal）。
+    // 原点要分两次量：箭头的位置在切步骤**之前**量（切完它就跟旧页一起藏了），
+    // 正文区的盒子在**之后**量 —— 顶栏底栏在步 0 是 display:none，一切到步 1
+    // 正文区就矮一截、左上角也跟着下移，只量一次会整体错位。
+    const revealFrom = (originX, originY) => {
+      const sheetBox = sheet.getBoundingClientRect();
+      const bodyBox = sheet.querySelector(".setup-body").getBoundingClientRect();
+      const pane = panes[step];
+      // 裁切坐标是相对被裁元素自己的边框盒，而正文区没有内边距、竖切面板是 inset:0，
+      // 所以正文区的盒子就是面板的盒子，可以直接拿它换算。
+      const x = originX - (bodyBox.left - sheetBox.left);
+      const y = originY - (bodyBox.top - sheetBox.top);
+      // 半径取正文区四角里离原点最远那个；多留 2px，免得动画演完撤掉裁切时四个角跳一下
+      const r = Math.ceil(Math.max(
+        Math.hypot(x, y), Math.hypot(bodyBox.width - x, y),
+        Math.hypot(x, bodyBox.height - y), Math.hypot(bodyBox.width - x, bodyBox.height - y),
+      )) + 2;
+      sheet.style.setProperty("--rv-x", `${x}px`);
+      sheet.style.setProperty("--rv-y", `${y}px`);
+      sheet.style.setProperty("--rv-r", `${r}px`);
+      sheet.classList.add("is-revealing");
+      // 这一页的分层入场（setup-rise）要按住：两个动效叠在一起互相抵消 ——
+      // 圆还没铺到，文字自己先淡进来了，看上去就不像「从箭头里长出来」的。
+      // 按住之后圆内是已经完整的一页，只有裁切在动。
+      // 这个类**不撤** —— 撤掉时动画名从 none 变回 setup-rise，会重放一次入场。
+      pane.classList.add("no-rise");
+      // 演完就撤：这层裁切只在这一次转场里有意义，留着会让后面几步的翻页也走这条路。
+      // 再挂个定时器兜底 —— 万一 animationend 因为别的原因没来，卡着 .is-revealing
+      // 会让引导一直停在裁切状态。
+      const done = (ev) => {
+        if (ev.target !== pane || ev.animationName !== "setup-reveal") return;
+        pane.removeEventListener("animationend", done);
+        sheet.classList.remove("is-revealing");
+      };
+      pane.addEventListener("animationend", done);
+      setTimeout(() => sheet.classList.remove("is-revealing"), 1000);
+    };
+
     const go = (next) => {
       // 往前走要过许可页；往回走永远放行，不然一勾错就卡死在那一页了
       if (blocked() && next > step) return;
       if (step === SETUP_AGREE_STEP && next > step) logConsent();
+      // 只有「从欢迎页往前走」这一下扩散；后面几步是普通翻页，滑动更安静
+      let origin = null;
+      if (step === 0 && next > step) {
+        const s = sheet.getBoundingClientRect();
+        const g = goBtn.getBoundingClientRect();
+        origin = [g.left + g.width / 2 - s.left, g.top + g.height / 2 - s.top];
+      }
       step = Math.max(0, Math.min(lastStep, next));
       paint();
+      if (origin) revealFrom(origin[0], origin[1]);
     };
 
     agreeBox.onchange = paint;
+    goBtn.onclick = () => go(step + 1);          // 欢迎页那颗圆按钮
     backBtn.onclick = () => go(step - 1);
     nextBtn.onclick = () => go(step + 1);
     paint();
@@ -1391,7 +1450,7 @@ async function boot() {
   state.token = info.token;
 
   const data = await reloadCore();
-  applyTheme(state.cfg?.theme || "dark");     // 用户上次选的外观：system / light / dark
+  applyTheme(state.cfg?.theme || "system");   // 用户上次选的外观：system / light / dark
   renderHistory(data.conversation);
   connectWs();
 
