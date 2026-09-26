@@ -170,7 +170,8 @@
   --scrim: rgba(228, 234, 245, .62);
   --hairline: rgba(20, 30, 60, .10);
 
-  --bubble-bot: linear-gradient(155deg, rgba(255, 255, 255, .82), rgba(255, 255, 255, .58));
+  /* 固定助手气泡底色，避免透出后方亮度变化，让同一行正文看起来深浅不一。 */
+  --bubble-bot: rgba(248, 250, 254, .96);
   --bubble-bot-border: rgba(255, 255, 255, .9);
   --bubble-user: linear-gradient(150deg, #F0D49A, #E2BC74);
   --bubble-user-border: rgba(255, 255, 255, .7);
@@ -313,6 +314,7 @@ body {
 
 .glass {
   position: relative;
+  isolation: isolate;
   background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-rim), var(--shadow-md);
@@ -326,6 +328,7 @@ body {
 .glass::before {
   content: "";
   position: absolute;
+  z-index: -1;
   inset: 0;
   border-radius: inherit;
   background: var(--glass-sheen);
