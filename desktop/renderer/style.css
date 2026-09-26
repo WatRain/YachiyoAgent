@@ -1170,6 +1170,61 @@ body.pet-detached .panel { display: none; }
   padding-left: var(--gap-xs);
 }
 
+/* 设置分类：沿用分段控件的玻璃底和选中态，让标签成为设置页的一部分。 */
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-md);
+  background: var(--seg-bg);
+  box-shadow: var(--glass-rim);
+}
+.settings-tab {
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--fast) var(--ease), background var(--fast) var(--ease),
+              border-color var(--fast) var(--ease), transform var(--press) var(--spring);
+}
+.settings-tab:hover { color: var(--text); background: color-mix(in srgb, var(--seg-on) 55%, transparent); }
+.settings-tab:active { transform: scale(.97); }
+.settings-tab.on,
+.settings-tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--seg-on);
+  border-color: var(--glass-border-hi);
+  box-shadow: var(--glass-rim);
+}
+.settings-tab:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: var(--glass-rim), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.settings-body { min-width: 0; }
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-lg);
+  min-width: 0;
+}
+.settings-panel[hidden] { display: none; }
+.settings-data-note { margin-top: -4px; }
+
+@media (max-width: 500px) {
+  .settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* 偏好行（借 Miuix 的设置页结构：左文右控件） */
 .pref {
   display: flex;

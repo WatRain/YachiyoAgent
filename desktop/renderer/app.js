@@ -1384,6 +1384,78 @@ function openSettings() {
       : "";
     sheet.appendChild(intro);
 
+    // 设置内容按使用场景分组，避免把所有选项堆成一条长页面。
+    // 标签只是换视图，不会销毁面板里的控件，所以已有的事件和异步状态都能保留。
+    const settingsTabs = document.createElement("div");
+    settingsTabs.className = "settings-tabs";
+    settingsTabs.setAttribute("role", "tablist");
+    settingsTabs.setAttribute("aria-label", "设置分类");
+    const settingsBody = document.createElement("div");
+    settingsBody.className = "settings-body";
+    const settingsGroups = [
+      ["appearance", "外观与角色"],
+      ["provider", "模型服务"],
+      ["conversation", "对话与工具"],
+      ["data", "数据管理"],
+    ];
+    const settingsPanels = new Map();
+    const settingsTabButtons = new Map();
+    for (const [id, label] of settingsGroups) {
+      const tab = document.createElement("button");
+      tab.className = "settings-tab";
+      tab.type = "button";
+      tab.id = `settings-tab-${id}`;
+      tab.dataset.settingsTab = id;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", `settings-panel-${id}`);
+      tab.setAttribute("aria-selected", "false");
+      tab.tabIndex = -1;
+      tab.textContent = label;
+      settingsTabs.appendChild(tab);
+
+      const panel = document.createElement("section");
+      panel.className = "settings-panel";
+      panel.id = `settings-panel-${id}`;
+      panel.dataset.settingsPanel = id;
+      panel.setAttribute("role", "tabpanel");
+      panel.setAttribute("aria-labelledby", tab.id);
+      panel.hidden = true;
+      settingsBody.appendChild(panel);
+      settingsPanels.set(id, panel);
+      settingsTabButtons.set(id, tab);
+    }
+    sheet.appendChild(settingsTabs);
+    sheet.appendChild(settingsBody);
+
+    const activateSettingsTab = (id, focus = false) => {
+      for (const [tabId, tab] of settingsTabButtons) {
+        const activeTab = tabId === id;
+        tab.classList.toggle("on", activeTab);
+        tab.setAttribute("aria-selected", activeTab ? "true" : "false");
+        tab.tabIndex = activeTab ? 0 : -1;
+        settingsPanels.get(tabId).hidden = !activeTab;
+      }
+      if (focus) settingsTabButtons.get(id)?.focus();
+    };
+    for (const [index, [id]] of settingsGroups.entries()) {
+      const tab = settingsTabButtons.get(id);
+      tab.onclick = () => activateSettingsTab(id);
+      tab.onkeydown = (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === "Home" ? 0
+          : event.key === "End" ? settingsGroups.length - 1
+            : (index + (event.key === "ArrowRight" ? 1 : -1) + settingsGroups.length) % settingsGroups.length;
+        activateSettingsTab(settingsGroups[next][0], true);
+      };
+    }
+    activateSettingsTab("appearance");
+
+    const appearancePanel = settingsPanels.get("appearance");
+    const providerPanel = settingsPanels.get("provider");
+    const conversationPanel = settingsPanels.get("conversation");
+    const dataPanel = settingsPanels.get("data");
+
     // 外观：跟随系统 / 浅色 / 深色，选完立刻写回 config.theme
     const look = document.createElement("div");
     look.className = "sect";
@@ -1403,7 +1475,7 @@ function openSettings() {
     for (const btn of look.querySelectorAll("[data-theme-set]")) {
       btn.onclick = () => applyTheme(btn.dataset.themeSet, { persist: true });
     }
-    sheet.appendChild(look);
+    appearancePanel.appendChild(look);
     applyTheme(state.themeMode || state.cfg?.theme || "system");   // 把当前选中态刷到刚建好的开关上
 
     // 角色：显示的是模型目录名。模型是美术作品，版权与代码无关 ——
@@ -1489,7 +1561,7 @@ function openSettings() {
         sizeHint.textContent = sizeText(pct / 100) + (info.open ? "" : "（脱离后按这个开）");
       })();
     }
-    sheet.appendChild(who);
+    appearancePanel.appendChild(who);
 
     // 当前用哪个 provider
     const list = document.createElement("div");
@@ -1509,7 +1581,7 @@ function openSettings() {
       };
       chips.appendChild(chip);
     }
-    sheet.appendChild(list);
+    providerPanel.appendChild(list);
 
     // 温度
     const temp = document.createElement("div");
@@ -1524,7 +1596,7 @@ function openSettings() {
       await api("/api/config", { method: "POST", body: { temperature: Number(range.value) } });
       state.cfg.temperature = Number(range.value);
     };
-    sheet.appendChild(temp);
+    conversationPanel.appendChild(temp);
 
     // 工具：档位 + 动手前确认 + 当前挂着哪些工具（目录从后端读，别在前端抄一份）
     const toolsSect = document.createElement("div");
@@ -1553,7 +1625,7 @@ function openSettings() {
              aria-label="动手前先问我" tabindex="0"></div>
       </div>
       <div class="tool-list" id="tool-list"><div class="hint">正在读工具列表…</div></div>`;
-    sheet.appendChild(toolsSect);
+    conversationPanel.appendChild(toolsSect);
 
     const TOOL_PROFILE_DESC = {
       off: "八千代只会聊天，不碰你的电脑。",
@@ -1653,8 +1725,8 @@ function openSettings() {
     const editTitle = document.createElement("div");
     editTitle.className = "sect-title";
     editTitle.textContent = active ? `修改「${active.display_name}」` : "还没有可用的服务，先在下面配一个";
-    sheet.appendChild(editTitle);
-    providerForm(sheet, {
+    providerPanel.appendChild(editTitle);
+    providerForm(providerPanel, {
       provider: active || null,
       onSaved: async (id, extra) => {
         await reloadCore();
@@ -1673,7 +1745,12 @@ function openSettings() {
       renderHistory([]);
       setStatus("对话记录已清空");
     };
-    sheet.appendChild(danger);
+    dataPanel.appendChild(danger);
+
+    const dataNote = document.createElement("div");
+    dataNote.className = "hint settings-data-note";
+    dataNote.textContent = "对话记录保存在本机数据目录，删除后无法恢复。";
+    dataPanel.insertBefore(dataNote, danger);
 
     const close = document.createElement("div");
     close.className = "row";
