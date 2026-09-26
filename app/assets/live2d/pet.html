@@ -296,6 +296,9 @@ function watchRenderedParameters(cm, iEyeX, iEyeY) {
   return true;
 }
 
+// 内置模型的眼睛大约位于绘制内容顶部下方 10%；用内容比例定位，浮窗缩放时也保持在眼睛高度。
+const GAZE_EYE_Y = 0.10;
+
 function fit() {
   if (!app || !model) return;
   const w = app.screen.width;
@@ -326,20 +329,14 @@ function fit() {
   // 让内容框的"底边中点"落在画面底部中央
   model.position.set(w / 2 - (boxX + boxW / 2) * s, h - (boxY + boxH) * s);
 
-  /* 视线场的零点：模型内容框的中心 —— 引擎归一化后的 (0, 0) 就落在这一点上。
-     内容框横向居中、底边贴着画面底部，所以中心 x 恒为 w/2、中心 y = h − 内容高/2。
-     窗口比例一变内容框的高矮就变，所以每次 fit 都得重算。 */
-  state.gazeAnchor = [w / 2, h - (boxH / 2) * s];
+  /* 鼠标位于眼睛处时应看向正前方。角色内容底边贴着画布底部，按绘制内容比例
+     找眼睛高度，避免把舞台/模型的几何中心误当成视线中性点。 */
+  const contentTop = h - boxH * s;
+  state.gazeAnchor = [w / 2, contentTop + boxH * s * GAZE_EYE_Y];
 }
 
-/* 视线场的半宽/半高 = 画面半宽/半高 × GAZE_SPAN。
-   1 = 整个窗口都是线性区；调大更钝（窗口边缘也到不了 ±1），调小更灵（没到边缘就顶满）。
-   只有独立浮窗用得上（见 lookAt）。 */
+/* 视线场的跨度比例。1 表示画布边缘到达最大视角；调大更钝，调小更灵。 */
 const GAZE_SPAN = 1;
-
-/* 这一页有两种用法：面板里的 iframe（不带 ?window）和脱离后的独立浮窗（?window=1）。
-   视线场只在浮窗里改成"整窗线性"；面板里保持引擎原本的 model.focus（有效区只在正中一小块）。 */
-const STANDALONE = new URLSearchParams(location.search).get("window") === "1";
 
 /** 给贴图源补上引擎要读的 `_gpuData` 字段（原因见调用处的注释）。返回补了几个。 */
 function patchTextureGpuData(m) {
@@ -698,45 +695,22 @@ async function start() {
       fit();
       return state.scale;
     },
-    /** 让角色看向**画面坐标**里的一个点（帧像素，左上角为原点）。
-     *
-     *  ★ 为什么由外面（Python / 主进程）驱动，而不是让引擎自己跟着鼠标：
-     *    这一页是隐藏的无头页面，鼠标永远不会经过它，浏览器这侧收不到
-     *    任何指针事件 —— 引擎自带的 autoFocus 监听的就是 canvas 上的指针，
-     *    在这里永远是空的。所以位置得由界面那一侧转发进来（见 gaze.py）。
-     *
-     *  ★ 两种用法走两条路（STANDALONE = 是否独立浮窗）：
-     *
-     *    · 面板里（iframe，不带 ?window）：沿用引擎的 model.focus(x, y)。它按**模型
-     *      包围盒**归一化，而盒子只占画面中间一小块，于是 ±70px 就把归一化值顶到 ±1。
-     *      实测（画布 380×680，扫 x=0..380 读 focusController.targetX）：x<190 全是
-     *      −0.999…−0.767、x>190 全是 +0.767…+0.999，y 以 340 为界是 ±1 两个台阶 ——
-     *      只有画面正中约 40px 一条是渐变的。用户明确说过**面板这块不要改**。
-     *
-     *    · 独立浮窗（?window=1）：改成按**画面半宽/半高**归一化，零点仍是模型包围盒
-     *      中心（= 引擎的正前方），整个窗口都是线性区，x/y 各自独立，落在
-     *      ParamEyeBallX/Y（±1）与 ParamAngleX/Y（±30°）上。
-     *
-     *  ★ y 必须取负：画面 y 向下为正，而 focus 空间 +1 是"看上去"。引擎自己的
-     *    model.focus 也是这么干的（vendor/pixi-live2d-engine.cubism.es.js:6190
-     *    的 `focus(Math.cos(radian), -Math.sin(radian))`，toModelPosition 已把
-     *    画面 y 翻成模型 y）。少这个负号 = 鼠标往上模型往下看。 */
+    /** 按眼睛所在位置作为鼠标视线的中性点；面板与桌面浮窗采用一致的平滑映射。 */
     lookAt(x, y) {
       if (!model) throw new Error("模型没就绪（lookAt）");
       const w = app.screen.width;
       const h = app.screen.height;
       const cx = Math.max(0, Math.min(w, Number(x) || 0));
       const cy = Math.max(0, Math.min(h, Number(y) || 0));
-      if (!STANDALONE) {
-        model.focus(cx, cy);
-      } else {
-        const anchor = state.gazeAnchor || [w / 2, h / 2];
-        const halfW = Math.max(1, w / 2) * GAZE_SPAN;
-        const halfH = Math.max(1, h / 2) * GAZE_SPAN;
-        const nx = Math.max(-1, Math.min(1, (cx - anchor[0]) / halfW));
-        const ny = Math.max(-1, Math.min(1, (anchor[1] - cy) / halfH));
-        model.internalModel.focusController.focus(nx, ny);
-      }
+      const anchor = state.gazeAnchor || [w / 2, h * GAZE_EYE_Y];
+      const halfW = Math.max(1, w / 2) * GAZE_SPAN;
+      const nx = Math.max(-1, Math.min(1, (cx - anchor[0]) / halfW));
+      // 眼睛以上与以下可用空间不等，分别归一化，让画布上下边缘都对应完整视角。
+      const ySpan = cy <= anchor[1] ? Math.max(1, anchor[1]) : Math.max(1, h - anchor[1]);
+      const ny = cy <= anchor[1]
+        ? (anchor[1] - cy) / (ySpan * GAZE_SPAN)
+        : -(cy - anchor[1]) / (ySpan * GAZE_SPAN);
+      model.internalModel.focusController.focus(nx, Math.max(-1, Math.min(1, ny)));
       state.look = [Math.round(cx), Math.round(cy)];
       return state.look;
     },

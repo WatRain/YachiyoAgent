@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("yachiyoShell", {
 
   minimize: () => ipcRenderer.send("win:minimize"),
   close: () => ipcRenderer.send("win:close"),
+  setGazePaused: (paused) => ipcRenderer.send("gaze:pause", Boolean(paused)),
 
   /** 往主进程的日志文件里写一行。
    *  桌面应用出问题时用户看不到 console，所以界面这边的关键状态要落盘。 */

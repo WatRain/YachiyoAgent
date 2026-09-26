@@ -81,6 +81,7 @@ let backend = null;
 let startupError = "";
 let win = null;
 let cursorTimer = null;
+let gazePaused = false;
 
 /* ── 角色浮窗：把 Live2D 从右侧面板里"拿出来"，变成桌面上一个透明小窗 ──
  *
@@ -252,6 +253,7 @@ function cursorLoop() {
       /* 角色脱离到桌面时，视线由**主进程直接驱动浮窗**：算成浮窗内的画面坐标发过去。
          这样主窗口最小化、被挡住、甚至看不见都不影响跟随（渲染层那边不再插手）。 */
       if (petWin && !petWin.isDestroyed()) {
+        if (gazePaused) return;
         const b = petWin.getBounds();
         const x = point.x - b.x;
         const y = point.y - b.y;
@@ -336,6 +338,13 @@ ipcMain.handle("shell:info", () => {
 });
 
 ipcMain.on("app:log", (_event, ...parts) => log("[renderer]", ...parts));
+
+ipcMain.on("gaze:pause", (_event, paused) => {
+  gazePaused = Boolean(paused);
+  if (gazePaused && petWin && !petWin.isDestroyed()) {
+    petWin.webContents.send("pet:cmd", { name: "lookForward", args: [] });
+  }
+});
 
 ipcMain.on("win:minimize", () => {
   if (win && !win.isDestroyed()) win.minimize();

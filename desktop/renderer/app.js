@@ -30,6 +30,7 @@ const state = {
   themeMode: "system",      // system / light / dark，与后端 config.theme 同步
   petDetached: false,       // 角色是不是已经脱离到桌面浮窗（与 config.live2d_detached 同步）
   panelBooted: false,       // 角色面板是不是已经放过出来了（引导期间先扣着，见 ensurePanel）
+  settingsOpen: false,      // 设置浮层打开时暂停 Live2D 的鼠标视线跟随
 };
 
 const STAGE_WIDTH = 380;
@@ -915,6 +916,13 @@ function watchGaze() {
 
   if (!window.yachiyoShell || !window.yachiyoShell.onCursor) return;
   window.yachiyoShell.onCursor((point) => {
+    if (state.settingsOpen) {
+      if (last !== "paused") {
+        last = "paused";
+        try { petCall("lookForward"); } catch { /* 页面可能还没就绪 */ }
+      }
+      return;
+    }
     // 脱离之后主进程不再往这边发 cursor（它直接驱动浮窗），这条只是保险
     if (state.petDetached) return;
     const win = petWindow();
@@ -1139,6 +1147,7 @@ function closeOverlay(opts) {
     ui.overlay.classList.remove("is-closing");
     ui.overlay.classList.add("hidden");
     ui.overlay.innerHTML = "";
+    if (state.settingsOpen) setSettingsGazePaused(false);
   };
   if (immediate || !sheet) { finish(); return; }
   const onEnd = (ev) => {
@@ -1173,6 +1182,13 @@ function showSheet(build) {
   ui.overlay.classList.remove("hidden");
   markScrolling(sheet);
   build(sheet);
+}
+
+function setSettingsGazePaused(paused) {
+  state.settingsOpen = Boolean(paused);
+  try { window.yachiyoShell?.setGazePaused?.(state.settingsOpen); } catch { /* 主进程可能已关闭 */ }
+  // 主面板由渲染层驱动，浮窗由主进程驱动；打开设置时两边都回正。
+  if (state.settingsOpen && !state.petDetached) petCall("lookForward");
 }
 
 const PROTOCOLS = [
@@ -1365,6 +1381,7 @@ async function reloadCore() {
 }
 
 function openSettings() {
+  setSettingsGazePaused(true);
   showSheet(async (sheet) => {
     // 后端要是暂时连不上，设置页也必须画出来：否则用户点"设置"只看到一片空白，
     // 连"外观"这种纯前端的开关都摸不到，也没法判断到底哪儿坏了。
