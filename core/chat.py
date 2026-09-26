@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from core import memory as memory_mod
-from core.llm import humanize_error
+from core.llm import get_litellm_acompletion, humanize_error
 from core.paths import resource_path
 
 log = logging.getLogger(__name__)
@@ -342,8 +342,8 @@ class Chat:
 
         只负责"往外吐字"和"记账"（写进 sink），不碰 self.messages。
 
-        from litellm import ... 写在函数里面，不放文件顶部：
-        import litellm 要 7 秒多，放顶部会让窗口启动慢 7 秒。
+        LiteLLM 在后端启动后后台预热；若首轮请求早于预热完成，导入在线程池
+        等待，避免同步导入阻塞整个后端事件循环。
 
         关于判空：流式里不是每一块都有内容。
           · 第一块可能只带 role，content 是 None
@@ -356,7 +356,7 @@ class Chat:
         只会得到"参数不是合法 JSON"。名字一般整块给（直接赋值），参数必须
         一截一截接起来 —— 两件事分开写，别图省事都用 +=。
         """
-        from litellm import acompletion
+        acompletion = await get_litellm_acompletion()
 
         extra: dict = {}
         if include_tools and self._tool_schemas:

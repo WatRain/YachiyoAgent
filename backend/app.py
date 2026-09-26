@@ -38,7 +38,7 @@ from core import providers as providers_mod
 from core import store
 from core.chat import Chat
 from core.config import AppConfig, ProviderConfig
-from core.llm import humanize_error, list_models, test_connection
+from core.llm import humanize_error, list_models, test_connection, warm_litellm
 from core.paths import PROJECT_ROOT, config_path, renderer_dir
 from core.secrets import SecretStore, backend_label_of
 from core.tools import (
@@ -287,6 +287,12 @@ def create_app(*, token: str = "", state: BackendState | None = None,
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if assets:
+            # SDK 导入较慢，放后台预热以免拖慢窗口启动；首轮若抢在预热前，
+            # get_litellm_acompletion() 会在线程池等待同一次导入。
+            _app.state.litellm_warmup_task = asyncio.create_task(
+                warm_litellm(), name="litellm-warmup"
+            )
         if on_ready is not None:
             on_ready()
         yield

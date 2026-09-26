@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 
 from core.config import ProviderConfig
 from core.providers import resolve_model_string, to_litellm_kwargs, validate_base_url
@@ -22,6 +24,42 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
 PING = "ping"
+
+_litellm_lock = threading.Lock()
+_litellm_module = None
+
+
+def _load_litellm_module():
+    """在线程中按需导入 LiteLLM；导入耗时不能卡住后端事件循环。"""
+    global _litellm_module
+    if _litellm_module is not None:
+        return _litellm_module
+
+    with _litellm_lock:
+        if _litellm_module is None:
+            started = time.perf_counter()
+            import litellm
+
+            _litellm_module = litellm
+            log.info("LiteLLM 初始化完成：%.2f 秒", time.perf_counter() - started)
+    return _litellm_module
+
+
+async def get_litellm_acompletion():
+    """取得 LiteLLM 请求函数；冷启动导入放在线程池里执行。"""
+    if _litellm_module is not None:
+        return _litellm_module.acompletion
+    module = await asyncio.to_thread(_load_litellm_module)
+    return module.acompletion
+
+
+async def warm_litellm() -> None:
+    """后台预加载 LiteLLM，避免把 SDK 导入成本记到首轮对话上。"""
+    try:
+        await get_litellm_acompletion()
+    except Exception as exc:
+        # 预热失败不应阻止后端启动；真实请求仍会再次尝试加载并返回错误。
+        log.warning("LiteLLM 后台预热失败：%s", type(exc).__name__)
 
 
 def humanize_error(exc: BaseException) -> str:
@@ -80,8 +118,6 @@ async def test_connection(
     返回 (是否成功, 给用户看的一句话)。**不抛异常**，所有失败都变成返回值。
     成本极低（max_tokens=1），所以可以放心让用户随手点。
     """
-    from litellm import acompletion
-
     if not (api_key or "").strip():
         return False, "请先填写 API Key。"
 
@@ -92,6 +128,7 @@ async def test_connection(
 
     where = _short_host(provider.base_url)
     target = f"{resolve_model_string(provider)} @ {where}"
+    acompletion = await get_litellm_acompletion()
 
     try:
         await asyncio.wait_for(

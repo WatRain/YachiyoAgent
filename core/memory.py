@@ -18,6 +18,7 @@ import json
 import logging
 
 from core import store
+from core.llm import get_litellm_acompletion
 
 log = logging.getLogger(__name__)
 
@@ -132,11 +133,10 @@ async def extract_memories(chat, user_text: str, assistant_text: str) -> list[di
     这里**不碰 chat.messages**（不能污染真实对话历史），
     而是临时发一次独立请求。
     """
-    from litellm import acompletion
-
     if not user_text.strip() or not assistant_text.strip():
         return []
 
+    acompletion = await get_litellm_acompletion()
     prompt = EXTRACT_PROMPT.format(user=user_text[:1500], assistant=assistant_text[:1500])
 
     try:
