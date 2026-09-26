@@ -631,6 +631,85 @@ let reply = null;            // 当前正在写的那个气泡
 let replyText = "";
 let lastFlush = 0;
 let lastPulse = 0;
+const PET_EXPRESSIONS = Object.freeze({
+  happy: "smile",
+  sad: "tears",
+  awkward: "tear_drop",
+  skeptical: "narrow_eyes",
+});
+const PET_MOTIONS = Object.freeze({
+  greet: "Greet",
+  comfort: "ReactError",
+});
+let pendingPetControl = null;
+let petResponseExpressionActive = false;
+let petExpressionResetTimer = 0;
+
+function normalizePetControl(msg) {
+  const expression = typeof msg.expression === "string" ? msg.expression : "";
+  const motion = typeof msg.motion === "string" ? msg.motion : "";
+  if (expression && expression !== "neutral" && !Object.hasOwn(PET_EXPRESSIONS, expression)) return null;
+  if (motion && !Object.hasOwn(PET_MOTIONS, motion)) return null;
+  if (!expression && !motion) return null;
+  return { expression, motion };
+}
+
+function applyPetControl(control) {
+  pendingPetControl = null;
+  if (control.motion) {
+    petCall("playMotion", [PET_MOTIONS[control.motion], 0, 3, {
+      loop: false,
+      resetExpression: false,
+    }]);
+  }
+  if (control.expression === "neutral") {
+    petCall("resetExpression");
+    petResponseExpressionActive = false;
+  } else if (control.expression) {
+    petCall("setExpression", [PET_EXPRESSIONS[control.expression]]);
+    petResponseExpressionActive = true;
+  }
+  if (petResponseExpressionActive && !state.busy) schedulePetExpressionReset();
+}
+
+async function handlePetControl(msg) {
+  const control = normalizePetControl(msg);
+  if (!control) return;
+  let ready = false;
+  if (state.petDetached) {
+    const snapshot = await petSnapshot();
+    ready = Boolean(snapshot?.ready);
+  } else {
+    ready = Boolean(petWindow()?.yachiyo?.ready);
+  }
+  if (!ready) {
+    pendingPetControl = control;
+    return;
+  }
+  applyPetControl(control);
+}
+
+function schedulePetExpressionReset() {
+  clearTimeout(petExpressionResetTimer);
+  petExpressionResetTimer = setTimeout(() => {
+    petExpressionResetTimer = 0;
+    if (!petResponseExpressionActive) return;
+    petCall("resetExpression");
+    petResponseExpressionActive = false;
+  }, 3500);
+}
+
+function beginPetResponse() {
+  clearTimeout(petExpressionResetTimer);
+  petExpressionResetTimer = 0;
+  pendingPetControl = null;
+  if (petResponseExpressionActive) petCall("resetExpression");
+  petResponseExpressionActive = false;
+}
+
+function endPetResponse() {
+  if (petResponseExpressionActive) schedulePetExpressionReset();
+}
 
 /* 助手气泡等到真有内容才建。
    原来是在 sendMessage 里就先建一个空气泡占位，可模型要是先调工具再回话，
@@ -644,6 +723,7 @@ function ensureReply() {
 function onWsEvent(msg) {
   switch (msg.type) {
     case "start":
+      beginPetResponse();
       resetToolCalls();
       setBusy(true);
       setStatus("正在思考…");
@@ -669,6 +749,9 @@ function onWsEvent(msg) {
       setStatus("");
       finishToolCall(msg);
       break;
+    case "live2d_control":
+      handlePetControl(msg);
+      break;
     case "tool_ask":
       // 模型想动真格了，等用户点头（后端那头的 approve 回调正卡在这儿）
       askToolPermission(msg);
@@ -677,10 +760,12 @@ function onWsEvent(msg) {
       replyText = msg.text || replyText;
       setBubbleText(ensureReply(), replyText || "（没有内容）");
       finishTurn();
+      endPetResponse();
       break;
     case "stopped":
       setBubbleText(ensureReply(), (msg.text || replyText || "") + "\n\n_（已停止）_");
       finishTurn();
+      endPetResponse();
       break;
     case "error":
       if (reply) {
@@ -692,6 +777,7 @@ function onWsEvent(msg) {
       }
       setStatus(msg.message || "出错了", true);
       finishTurn();
+      endPetResponse();
       break;
     case "pong":
       break;
@@ -1015,6 +1101,10 @@ function setPanelStatus(text, { flash = false } = {}) {
 
 async function pollPanel() {
   const info = await petSnapshot();
+
+  if (info?.ready && pendingPetControl) {
+    applyPetControl(pendingPetControl);
+  }
 
   if (!info) {
     // 掉回"没就绪"要把那一次的印记清掉：收回面板时 iframe 会重载，这一下必然
@@ -1646,7 +1736,7 @@ function openSettings() {
 
     const TOOL_PROFILE_DESC = {
       off: "八千代只会聊天，不碰你的电脑。",
-      safe: "能联网搜索、看时间、翻记忆、截图、读剪贴板、读文件。不会改任何东西。",
+      safe: "能联网搜索、看时间、翻记忆、截图、读剪贴板、读文件，也可按回复语气调整角色表情和动作；不会写入或修改文件。",
       full: "在上面那些之外，还能写文件、改文件、打开路径、执行命令（默认每次都要你点头）。",
     };
     let toolCatalog = [];

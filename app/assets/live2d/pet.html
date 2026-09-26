@@ -120,6 +120,7 @@
     state() { return window.__yachiyo.snapshot(); },
     setMouth() { return notReady(); },
     setExpression() { return notReady(); },
+    resetExpression() { return notReady(); },
     playMotion() { return notReady(); },
     setScale() { return notReady(); },
     listMotions() { return notReady(); },
@@ -682,13 +683,23 @@ async function start() {
       model.expression(String(name));
       return true;
     },
-    playMotion(group, index, priority) {
+    resetExpression() {
+      const manager = model.internalModel && model.internalModel.motionManager
+        && model.internalModel.motionManager.expressionManager;
+      if (!manager || typeof manager.resetExpression !== "function") return false;
+      manager.resetExpression();
+      // 同步管理器记录的当前表情，确保下次重新选择刚才的表情仍能生效。
+      if (manager.defaultExpression) manager.currentExpression = manager.defaultExpression;
+      return true;
+    },
+    playMotion(group, index, priority, options) {
       // priority: 1=IDLE 2=NORMAL（默认）3=FORCE。
       // idle 动作本身是 NORMAL 优先级，想打断它做别的动作必须用 FORCE，
       // 否则会被拒绝（实测返回 false，而且没有任何报错）。
       return model.motion(String(group),
                           Number.isInteger(index) ? index : undefined,
-                          Number.isInteger(priority) ? priority : undefined);
+                          Number.isInteger(priority) ? priority : undefined,
+                          options && typeof options === "object" ? options : undefined);
     },
     setScale(k) {
       state.scale = Number(k) || 1;

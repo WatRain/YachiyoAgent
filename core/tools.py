@@ -3,7 +3,7 @@
 档位（见 core/config.py 的 ToolSettings.profile）：
 
     off    一个都不带 —— 退化成纯聊天
-    safe   联网 / 时间 / 记忆 / 截图 / 剪贴板 / 只读文件（默认）
+    safe   联网 / 时间 / 记忆 / 截图 / 剪贴板 / 只读文件 / Live2D 表情动作（默认）
     full   safe + 写文件 / 改文件 / 打开路径 / 执行命令
 
 **危险工具动手之前要先问过用户。** core 层不认识 WebSocket，所以审批走
@@ -59,6 +59,9 @@ USER_AGENT = (
 )
 
 WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
+LIVE2D_EXPRESSIONS = frozenset({"neutral", "happy", "sad", "awkward", "skeptical"})
+LIVE2D_MOTIONS = frozenset({"none", "greet", "comfort"})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -235,6 +238,40 @@ async def _get_time(tb: "Toolbox", timezone: str = "") -> str:
             lines.append(f"（时区 {want} 认不出来，只给了本机时间）")
 
     return "\n".join(lines)
+
+
+async def _control_live2d(
+    tb: "Toolbox", expression: str = "", motion: str = "none"
+) -> str:
+    """把有限的情绪意图交给界面映射成当前模型支持的动作。"""
+    expression = str(expression or "").strip().lower()
+    motion = str(motion or "none").strip().lower()
+    if expression and expression not in LIVE2D_EXPRESSIONS:
+        return "错误：不支持这个表情意图。"
+    if motion not in LIVE2D_MOTIONS:
+        return "错误：不支持这个动作意图。"
+    if not expression and motion == "none":
+        return "没有指定表情或动作，不需要调用这个工具。"
+    if tb.live2d_control is None:
+        return "错误：当前界面没有可用的 Live2D 控制通道；继续正常回复即可。"
+
+    try:
+        sent = await tb.live2d_control(
+            expression or None,
+            None if motion == "none" else motion,
+        )
+    except Exception as exc:
+        log.info("Live2D 控制指令发送失败：%s", type(exc).__name__)
+        return "错误：Live2D 控制指令没有送达；继续正常回复即可。"
+    if not sent:
+        return "错误：Live2D 控制指令没有送达；继续正常回复即可。"
+
+    selected = []
+    if expression:
+        selected.append(f"表情={expression}")
+    if motion != "none":
+        selected.append(f"动作={motion}")
+    return "已发送角色控制：" + "，".join(selected)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -757,6 +794,38 @@ ALL_TOOLS: list[Tool] = [
         required=(),
         func=_get_time,
     ),
+    Tool(
+        name="control_live2d",
+        label="角色表情动作",
+        description=(
+            "按你准备发送的整段回复的含义、情绪和语气，为 Live2D 角色选择表情或动作。"
+            "每轮回复前都要主动判断：回复有明显情绪时，必须调用一次，不能等用户要求；"
+            "例如问候、感谢、开心、鼓励、安慰、道歉或轻松调侃。纯中性的事实说明或技术回答可以不调用。"
+            "根据完整上下文和你准备表达的意思判断，不要因单个关键词触发；若用户明确要求不要控制角色，遵从用户。"
+            "不要为了调用工具改变回复内容，也不要在文字里报告调用。"
+        ),
+        properties={
+            "expression": {
+                "type": "string",
+                "enum": ["neutral", "happy", "sad", "awkward", "skeptical"],
+                "description": (
+                    "可选的面部情绪：neutral=恢复自然表情；happy=温暖、开心或鼓励；"
+                    "sad=明显悲伤或安慰；awkward=轻微尴尬、抱歉或不好意思；"
+                    "skeptical=俏皮怀疑或调侃。按整段回复的真实语气选择。"
+                ),
+            },
+            "motion": {
+                "type": "string",
+                "enum": ["none", "greet", "comfort"],
+                "description": (
+                    "可选动作：none=不播放动作；greet=明确问候或庆祝时挥手；"
+                    "comfort=用户遇到挫折、失误或难过时做温和回应。通常留空或选 none。"
+                ),
+            },
+        },
+        required=(),
+        func=_control_live2d,
+    ),
     # ── 联网 ──
     Tool(
         name="web_search",
@@ -1071,8 +1140,14 @@ class Toolbox:
     **approve 是 None 时危险工具一律拒绝**（fail closed）。
     """
 
-    def __init__(self, *, approve: Callable[[str, dict, str], Awaitable[bool]] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        approve: Callable[[str, dict, str], Awaitable[bool]] | None = None,
+        live2d_control: Callable[[str | None, str | None], Awaitable[bool]] | None = None,
+    ) -> None:
         self.approve = approve
+        self.live2d_control = live2d_control
 
     def build(
         self,
@@ -1129,8 +1204,11 @@ def build_tools(
     profile: str = "safe",
     *,
     approve: Callable[[str, dict, str], Awaitable[bool]] | None = None,
+    live2d_control: Callable[[str | None, str | None], Awaitable[bool]] | None = None,
     allow: tuple[str, ...] | list[str] = (),
     deny: tuple[str, ...] | list[str] = (),
 ) -> tuple[list[dict], dict[str, Callable[..., Awaitable[str]]]]:
     """一次性建好（不给后续改 approve 的场合用）。"""
-    return Toolbox(approve=approve).build(profile, allow=allow, deny=deny)
+    return Toolbox(approve=approve, live2d_control=live2d_control).build(
+        profile, allow=allow, deny=deny
+    )

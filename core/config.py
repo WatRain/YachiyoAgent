@@ -62,7 +62,7 @@ class ToolSettings(BaseModel):
 
     profile 三档：
       off   一个工具都不挂，退化成纯聊天
-      safe  联网 / 时间 / 记忆 / 截图 / 剪贴板 / 只读文件（默认）
+      safe  联网 / 时间 / 记忆 / 截图 / 剪贴板 / 只读文件 / Live2D 表情动作（默认）
       full  safe + 写文件 / 改文件 / 打开路径 / 执行命令
 
     allow / deny 是额外的白名单与黑名单：想单开一个危险工具又不想整体放开，

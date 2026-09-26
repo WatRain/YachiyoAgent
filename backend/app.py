@@ -733,6 +733,8 @@ async def _run_turn(
                                                         一句话的摘要（原始结果可能
                                                         上万字），failed 只影响
                                                         卡片长什么样
+      {"type":"live2d_control","expression":...,"motion":...}
+                                                        有限的角色表情 / 动作意图
       {"type":"tool_ask","id":...,"name":...,"label":...,"preview":...}
                                                         要动真格了，等用户点头
       {"type":"done","text":...}                        这一轮完整文本
@@ -777,6 +779,17 @@ async def _run_turn(
             "failed": tool_failed(content),
         })
 
+    async def on_live2d_control(expression: str | None, motion: str | None) -> bool:
+        try:
+            await ws.send_json({
+                "type": "live2d_control",
+                "expression": expression,
+                "motion": motion,
+            })
+            return True
+        except Exception:
+            return False
+
     chat.on_tool_start = on_tool_start
     chat.on_tool_end = on_tool_end
 
@@ -788,6 +801,7 @@ async def _run_turn(
         chat.add_tools(*build_tools(
             st.cfg.tools.profile,
             approve=_make_approver(ws, st, approvals),
+            live2d_control=on_live2d_control,
             allow=st.cfg.tools.allow,
             deny=st.cfg.tools.deny,
         ))
