@@ -39,6 +39,7 @@
   /* 底与前景 */
   --bg-0: #0A0C12;
   --bg-1: #10131C;
+  --chat-popout-fill: color-mix(in srgb, var(--bg-1) 96%, transparent);
   --text: #EAEDF4;
   --text-2: #A9B1C3;
   --text-3: #8A93A8;
@@ -2026,6 +2027,8 @@ body.chat-popout-page {
   padding: 14px;
   gap: 11px;
   border-radius: 25px;
+  background: var(--chat-popout-fill);
+  border-color: var(--glass-border-hi);
   animation: chat-popout-in var(--normal) var(--spring);
 }
 @keyframes chat-popout-in {
