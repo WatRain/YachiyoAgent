@@ -1692,6 +1692,57 @@ async function reloadCore() {
   return data;
 }
 
+function loadAboutPage(panel) {
+  const card = document.createElement("article");
+  card.className = "about-document";
+  const markdown = document.createElement("div");
+  markdown.className = "about-markdown";
+  card.appendChild(markdown);
+  panel.appendChild(card);
+
+  const showError = () => {
+    markdown.replaceChildren();
+    markdown.classList.remove("is-loading");
+    const message = document.createElement("p");
+    message.className = "about-page-state";
+    message.textContent = "项目介绍暂时没能加载。";
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn";
+    retry.textContent = "重新加载";
+    retry.onclick = load;
+    markdown.append(message, retry);
+  };
+
+  async function load() {
+    markdown.textContent = "正在读取项目介绍…";
+    markdown.classList.add("is-loading");
+    try {
+      const response = await fetch("/about.md", { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      markdown.innerHTML = mdToHtml(await response.text());
+      markdown.classList.remove("is-loading");
+
+      // 原文里的标签保留为普通文本；在页面中只把它们排成标题层级。
+      for (const node of [...markdown.children]) {
+        if (node.tagName !== "P") continue;
+        const label = node.textContent.trim();
+        const level = label === "关于本项目" ? 1
+          : ["作者的碎碎念：", "另："].includes(label) ? 2 : 0;
+        if (!level) continue;
+        const heading = document.createElement(`h${level}`);
+        heading.className = level === 1 ? "about-title" : "about-section-title";
+        heading.innerHTML = node.innerHTML;
+        node.replaceWith(heading);
+      }
+    } catch {
+      showError();
+    }
+  }
+
+  load();
+}
+
 function openSettings() {
   setSettingsGazePaused(true);
   showSheet(async (sheet) => {
@@ -1727,6 +1778,7 @@ function openSettings() {
       ["provider", "模型服务"],
       ["conversation", "对话与工具"],
       ["data", "数据管理"],
+      ["about", "关于"],
     ];
     const settingsPanels = new Map();
     const settingsTabButtons = new Map();
@@ -1757,6 +1809,8 @@ function openSettings() {
     sheet.appendChild(settingsTabs);
     sheet.appendChild(settingsBody);
 
+    const aboutPanel = settingsPanels.get("about");
+    let aboutLoaded = false;
     const activateSettingsTab = (id, focus = false) => {
       for (const [tabId, tab] of settingsTabButtons) {
         const activeTab = tabId === id;
@@ -1764,6 +1818,10 @@ function openSettings() {
         tab.setAttribute("aria-selected", activeTab ? "true" : "false");
         tab.tabIndex = activeTab ? 0 : -1;
         settingsPanels.get(tabId).hidden = !activeTab;
+      }
+      if (id === "about" && !aboutLoaded) {
+        aboutLoaded = true;
+        loadAboutPage(aboutPanel);
       }
       if (focus) settingsTabButtons.get(id)?.focus();
     };

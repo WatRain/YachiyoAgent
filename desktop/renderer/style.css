@@ -1194,7 +1194,7 @@ body.pet-detached .panel { display: none; }
 /* 设置分类：沿用分段控件的玻璃底和选中态，让标签成为设置页的一部分。 */
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid var(--glass-border);
@@ -1247,6 +1247,119 @@ body.pet-detached .panel { display: none; }
 .settings-data-note { margin-top: -4px; }
 .chat-location-pref .seg { flex: none; }
 
+/* 关于页把作者原文作为 Markdown 展示，保留聊天页熟悉的语法与链接行为，
+   只在阅读页放大标题层级，并用一枚月牙标识把文档和应用的月夜主题连起来。 */
+.about-document {
+  min-width: 0;
+  padding: clamp(16px, 2.4vw, 24px);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--field-bg) 86%, transparent);
+  box-shadow: var(--glass-rim);
+}
+.about-markdown {
+  max-width: 62ch;
+  margin: 0 auto;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.82;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.about-markdown.is-loading,
+.about-page-state { color: var(--text-3); }
+.about-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  line-height: 1.35;
+}
+.about-title::before {
+  content: "☾";
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--glass-border-hi);
+  border-radius: 50%;
+  background: var(--seg-bg);
+  box-shadow: var(--glass-rim);
+  color: var(--gold);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+.about-markdown > p { margin: 0 0 11px; }
+.about-markdown > .about-title + p {
+  margin-bottom: 18px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+.about-markdown > .about-section-title {
+  margin: 26px 0 9px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: .025em;
+  line-height: 1.4;
+}
+.about-markdown > h4 {
+  margin: 20px 0 9px;
+  padding-left: 10px;
+  border-left: 2px solid var(--gold);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.about-markdown > h5 {
+  margin: 15px 0 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+}
+.about-markdown strong { color: var(--text); font-weight: 600; }
+.about-markdown del { opacity: .62; }
+.about-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  text-underline-offset: 2px;
+}
+.about-markdown a:hover { color: var(--accent-2); }
+.about-markdown ul,
+.about-markdown ol { margin: 6px 0 14px; padding-left: 21px; }
+.about-markdown li { margin: 4px 0; padding-left: 2px; }
+.about-markdown li::marker { color: var(--gold); }
+.about-markdown code {
+  padding: 1px 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.about-markdown blockquote {
+  margin: 10px 0;
+  padding: 7px 0 7px 12px;
+  border-left: 2px solid var(--gold);
+  color: var(--text-2);
+}
+.about-markdown hr { border: 0; border-top: 1px solid var(--hairline); margin: 18px 0; }
+.about-markdown .about-page-state { margin: 0 0 12px; }
+
 .settings-sheet {
   max-height: min(100%, calc(100dvh - 28px));
   padding: clamp(16px, 2.5vw, var(--gap-xl));
@@ -1294,6 +1407,8 @@ body.pet-detached .panel { display: none; }
   .settings-sheet .pref-main { flex: 1 1 100%; }
   .settings-sheet .pref > .seg,
   .settings-sheet .pref > .switch { margin-left: auto; }
+  .about-document { padding: 16px; }
+  .about-title { font-size: 21px; }
 }
 
 @media (max-height: 640px) {
