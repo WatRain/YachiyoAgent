@@ -107,7 +107,14 @@ let petChatWin = null;
 let petChatCloseReason = null;
 let petChatIsReady = false;
 let pendingPetChatToolAsks = [];
-let petChatLauncherAvailable = false;
+let petChatEnabled = false;
+
+function updatePetChatLauncherAvailability() {
+  if (!petWin || petWin.isDestroyed()) return;
+  const visible = Boolean(petChatEnabled
+    && (!petChatWin || petChatWin.isDestroyed() || !petChatWin.isVisible()));
+  petWin.webContents.send("pet:chat-availability", visible);
+}
 
 function petBoundsFile() {
   // 位置/大小是**界面状态**，不进后端配置（那里面是应用数据）
@@ -234,7 +241,7 @@ function createPetWindow(url, bounds) {
   const self = petWin;
   petWin.webContents.on("did-finish-load", () => {
     if (petWin !== self || self.isDestroyed()) return;
-    self.webContents.send("pet:chat-availability", petChatLauncherAvailable);
+    updatePetChatLauncherAvailability();
   });
   petWin.on("closed", () => {
     if (petWin !== self) return;  // 已经是另一个浮窗了，别把新的置空
@@ -350,6 +357,11 @@ function createPetChatWindow(theme = "dark", { focus = false } = {}) {
     return { action: "deny" };
   });
   const self = petChatWin;
+  for (const eventName of ["show", "hide"]) {
+    petChatWin.on(eventName, () => {
+      if (petChatWin === self && !self.isDestroyed()) updatePetChatLauncherAvailability();
+    });
+  }
   petChatWin.on("closed", () => {
     if (petChatWin !== self) return;
     petChatWin = null;
@@ -361,6 +373,7 @@ function createPetChatWindow(theme = "dark", { focus = false } = {}) {
       win.webContents.send("pet-chat:open-state", false);
       win.webContents.send("pet-chat:closed", { reason });
     }
+    updatePetChatLauncherAvailability();
     log("角色旁聊天小窗关闭：", reason);
   });
   const initialTheme = theme === "light" ? "light" : "dark";
@@ -522,7 +535,7 @@ ipcMain.handle("pet-chat:open", (event, requestedTheme) => {
   const fromMain = Boolean(win && !win.isDestroyed() && event.sender === win.webContents);
   const fromPet = Boolean(petWin && !petWin.isDestroyed() && event.sender === petWin.webContents);
   if (!fromMain && !fromPet) return { ok: false, error: "无权打开聊天小窗" };
-  if (fromPet && !petChatLauncherAvailable) return { ok: false, error: "当前对话位置不是角色旁" };
+  if (fromPet && !petChatEnabled) return { ok: false, error: "当前对话位置不是角色旁" };
   if (!win || win.isDestroyed()) return { ok: false, error: "主窗口尚未打开" };
   if (!petWin || petWin.isDestroyed()) return { ok: false, error: "角色浮窗尚未打开" };
   try {
@@ -538,10 +551,8 @@ ipcMain.handle("pet-chat:open", (event, requestedTheme) => {
 
 ipcMain.on("pet-chat:availability", (event, available) => {
   if (event.sender !== win?.webContents) return;
-  petChatLauncherAvailable = Boolean(available);
-  if (petWin && !petWin.isDestroyed()) {
-    petWin.webContents.send("pet:chat-availability", petChatLauncherAvailable);
-  }
+  petChatEnabled = Boolean(available);
+  updatePetChatLauncherAvailability();
 });
 
 ipcMain.on("pet-chat:collapse", (event) => {
