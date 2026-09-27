@@ -76,6 +76,7 @@ EDITABLE_CONFIG_FIELDS = {
     "theme",
     "live2d_physics",
     "live2d_detached",
+    "chat_location",
     # 隐私政策 / 许可条款的同意记录（前端过许可页时写一次）。
     "consent",
     # 工具调用档位与 allow/deny（见 core/tools.py）

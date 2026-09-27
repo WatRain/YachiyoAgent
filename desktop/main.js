@@ -98,8 +98,16 @@ const PET_W = 380;              // 和面板里的舞台同尺寸，脱离瞬间
 const PET_H = 680;
 const PET_MIN_W = 180;
 const PET_MIN_H = 260;
+const PET_CHAT_W = 360;
+const PET_CHAT_H = 500;
+const PET_CHAT_GAP = 14;
 let petWin = null;
 let petBoundsTimer = null;
+let petChatWin = null;
+let petChatCloseReason = null;
+let petChatIsReady = false;
+let pendingPetChatToolAsks = [];
+let petChatLauncherAvailable = false;
 
 function petBoundsFile() {
   // 位置/大小是**界面状态**，不进后端配置（那里面是应用数据）
@@ -215,12 +223,23 @@ function createPetWindow(url, bounds) {
   });
 
   // 事件对象会被当成 bounds 塞进来，所以包一层
-  petWin.on("move", () => savePetBoundsSoon());
-  petWin.on("resize", () => savePetBoundsSoon());
+  petWin.on("move", () => {
+    savePetBoundsSoon();
+    positionPetChatWindow();
+  });
+  petWin.on("resize", () => {
+    savePetBoundsSoon();
+    positionPetChatWindow();
+  });
   const self = petWin;
+  petWin.webContents.on("did-finish-load", () => {
+    if (petWin !== self || self.isDestroyed()) return;
+    self.webContents.send("pet:chat-availability", petChatLauncherAvailable);
+  });
   petWin.on("closed", () => {
     if (petWin !== self) return;  // 已经是另一个浮窗了，别把新的置空
     petWin = null;
+    closePetChatWindow("pet-docked");
     if (petBoundsTimer) clearTimeout(petBoundsTimer);
     petBoundsTimer = null;
     notifyPetClosed("window-closed");
@@ -236,7 +255,126 @@ function closePetWindow(reason) {
     return false;
   }
   log("角色浮窗收回：", reason);
+  closePetChatWindow("pet-docked");
   petWin.close();                 // closed 回调里置空并通知渲染层
+  return true;
+}
+
+/** 把聊天小窗放到角色左右有空间的一侧，并在拖动/缩放角色时保持相邻。 */
+function petChatBounds() {
+  if (!petWin || petWin.isDestroyed()) return null;
+  const pet = petWin.getBounds();
+  const display = screen.getDisplayNearestPoint({
+    x: Math.round(pet.x + pet.width / 2),
+    y: Math.round(pet.y + pet.height / 2),
+  });
+  const area = display.workArea;
+  const width = Math.min(PET_CHAT_W, Math.max(1, area.width - 16));
+  const height = Math.min(PET_CHAT_H, Math.max(1, area.height - 16));
+  const rightX = pet.x + pet.width + PET_CHAT_GAP;
+  const leftX = pet.x - width - PET_CHAT_GAP;
+  const rightSpace = area.x + area.width - rightX;
+  const leftSpace = pet.x - PET_CHAT_GAP - area.x;
+  let x;
+  if (rightSpace >= width) x = rightX;
+  else if (leftSpace >= width) x = leftX;
+  else x = rightSpace >= leftSpace ? rightX : leftX;
+  const y = pet.y + (pet.height - height) / 2;
+  return {
+    x: Math.round(Math.min(area.x + area.width - width - 8, Math.max(area.x + 8, x))),
+    y: Math.round(Math.min(area.y + area.height - height - 8, Math.max(area.y + 8, y))),
+    width,
+    height,
+  };
+}
+
+function positionPetChatWindow() {
+  if (!petChatWin || petChatWin.isDestroyed()) return;
+  const bounds = petChatBounds();
+  if (!bounds) return;
+  const current = petChatWin.getBounds();
+  if (current.x === bounds.x && current.y === bounds.y
+      && current.width === bounds.width && current.height === bounds.height) return;
+  petChatWin.setBounds(bounds, false);
+}
+
+function createPetChatWindow(theme = "dark", { focus = false } = {}) {
+  if (petChatWin && !petChatWin.isDestroyed()) {
+    positionPetChatWindow();
+    if (focus) {
+      petChatWin.show();
+      petChatWin.focus();
+    } else if (!petChatWin.isVisible()) {
+      petChatWin.showInactive();
+    }
+    return petChatWin;
+  }
+  const bounds = petChatBounds();
+  if (!bounds || !backend?.info?.url) return null;
+  petChatWin = new BrowserWindow({
+    ...bounds,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    hasShadow: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  petChatIsReady = false;
+  pendingPetChatToolAsks = [];
+  petChatWin.setAlwaysOnTop(true, "screen-saver");
+  petChatWin.once("ready-to-show", () => {
+    if (!petChatWin || petChatWin.isDestroyed()) return;
+    if (focus) {
+      petChatWin.show();
+      petChatWin.focus();
+    } else {
+      petChatWin.showInactive();
+    }
+    log("角色旁聊天小窗已显示", petChatWin.getBounds());
+  });
+  petChatWin.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (/^https?:/.test(target)) shell.openExternal(target);
+    return { action: "deny" };
+  });
+  const self = petChatWin;
+  petChatWin.on("closed", () => {
+    if (petChatWin !== self) return;
+    petChatWin = null;
+    petChatIsReady = false;
+    pendingPetChatToolAsks = [];
+    const reason = petChatCloseReason || "unexpected";
+    petChatCloseReason = null;
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("pet-chat:open-state", false);
+      win.webContents.send("pet-chat:closed", { reason });
+    }
+    log("角色旁聊天小窗关闭：", reason);
+  });
+  const initialTheme = theme === "light" ? "light" : "dark";
+  petChatWin.loadURL(`${backend.info.url.replace(/\/$/, "")}/chat-popout.html?theme=${initialTheme}`);
+  return petChatWin;
+}
+
+function closePetChatWindow(reason = "closed") {
+  if (!petChatWin || petChatWin.isDestroyed()) {
+    petChatWin = null;
+    return false;
+  }
+  petChatCloseReason = reason;
+  petChatWin.close();
   return true;
 }
 
@@ -315,6 +453,7 @@ function createWindow() {
   cursorLoop();
 
   win.on("closed", () => {
+    closePetChatWindow("app-closed");
     win = null;
     if (cursorTimer) clearInterval(cursorTimer);
     cursorTimer = null;
@@ -376,6 +515,94 @@ ipcMain.handle("pet:detach", (_event, payload) => {
   }
   return { ok: true, bounds: petWin && !petWin.isDestroyed() ? petWin.getBounds() : null };
 });
+
+/* ── 角色旁聊天小窗 ──
+ * 主窗口是唯一聊天会话所有者；这个小窗仅收发 IPC，避免第二条 WS 造成并发回合。 */
+ipcMain.handle("pet-chat:open", (event, requestedTheme) => {
+  const fromMain = Boolean(win && !win.isDestroyed() && event.sender === win.webContents);
+  const fromPet = Boolean(petWin && !petWin.isDestroyed() && event.sender === petWin.webContents);
+  if (!fromMain && !fromPet) return { ok: false, error: "无权打开聊天小窗" };
+  if (fromPet && !petChatLauncherAvailable) return { ok: false, error: "当前对话位置不是角色旁" };
+  if (!win || win.isDestroyed()) return { ok: false, error: "主窗口尚未打开" };
+  if (!petWin || petWin.isDestroyed()) return { ok: false, error: "角色浮窗尚未打开" };
+  try {
+    const chat = createPetChatWindow(requestedTheme, { focus: fromPet });
+    if (!chat) return { ok: false, error: "聊天小窗创建失败" };
+    win.webContents.send("pet-chat:open-state", true);
+    return { ok: true, bounds: chat.getBounds() };
+  } catch (err) {
+    log("角色旁聊天小窗创建失败：", err);
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
+ipcMain.on("pet-chat:availability", (event, available) => {
+  if (event.sender !== win?.webContents) return;
+  petChatLauncherAvailable = Boolean(available);
+  if (petWin && !petWin.isDestroyed()) {
+    petWin.webContents.send("pet:chat-availability", petChatLauncherAvailable);
+  }
+});
+
+ipcMain.on("pet-chat:collapse", (event) => {
+  if (event.sender !== petChatWin?.webContents || !petChatWin || petChatWin.isDestroyed()) return;
+  // 收起只隐藏窗口，保留 chat_location 和同步会话；角色窗上的聊天按钮负责重新展开。
+  petChatWin.hide();
+  log("角色旁聊天小窗已收起");
+});
+
+ipcMain.handle("pet-chat:close", (event, requestedReason) => {
+  if (!win || event.sender !== win.webContents) return { ok: false };
+  const reasons = new Set(["location-main", "pet-docked", "app-closed"]);
+  const reason = reasons.has(requestedReason) ? requestedReason : "closed";
+  return { ok: closePetChatWindow(reason) };
+});
+
+ipcMain.on("pet-chat:ready", (event) => {
+  if (event.sender !== petChatWin?.webContents || !win || win.isDestroyed()) return;
+  petChatIsReady = true;
+  win.webContents.send("pet-chat:sync-request");
+  for (const payload of pendingPetChatToolAsks.splice(0)) {
+    petChatWin.webContents.send("pet-chat:tool-ask", payload);
+    petChatWin.show();
+    petChatWin.focus();
+  }
+});
+
+ipcMain.on("pet-chat:send", (event, text) => {
+  if (event.sender !== petChatWin?.webContents || !win || win.isDestroyed()) return;
+  if (typeof text !== "string") return;
+  win.webContents.send("pet-chat:send", text);
+});
+
+ipcMain.on("pet-chat:stop", (event) => {
+  if (event.sender !== petChatWin?.webContents || !win || win.isDestroyed()) return;
+  win.webContents.send("pet-chat:stop");
+});
+
+ipcMain.on("pet-chat:tool-decision", (event, payload) => {
+  if (event.sender !== petChatWin?.webContents || !win || win.isDestroyed()) return;
+  if (!payload || typeof payload.id !== "string") return;
+  win.webContents.send("pet-chat:tool-decision", {
+    id: payload.id,
+    ok: payload.ok === true,
+  });
+});
+
+for (const channel of ["pet-chat:snapshot", "pet-chat:entry", "pet-chat:meta", "pet-chat:tool-ask"]) {
+  ipcMain.on(channel, (event, payload) => {
+    if (event.sender !== win?.webContents || !petChatWin || petChatWin.isDestroyed()) return;
+    if (channel === "pet-chat:tool-ask" && !petChatIsReady) {
+      pendingPetChatToolAsks.push(payload);
+      return;
+    }
+    petChatWin.webContents.send(channel, payload);
+    if (channel === "pet-chat:tool-ask") {
+      petChatWin.show();
+      petChatWin.focus();
+    }
+  });
+}
 
 ipcMain.handle("pet:dock", () => ({ ok: closePetWindow("渲染层收回") }));
 

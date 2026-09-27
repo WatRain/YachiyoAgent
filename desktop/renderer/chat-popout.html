@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html class="chat-popout-root" lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: blob: http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>八千代 · 对话</title>
+  <script src="/chat-popout-theme.js"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="chat-popout-page">
+  <section class="chat glass chat-popout-card" aria-label="八千代聊天小窗">
+    <div class="chat-header chat-popout-header">
+      <span id="chat-dot" class="dot" aria-hidden="true"></span>
+      <span class="chat-popout-title">八千代 · 对话</span>
+      <button id="btn-collapse-chat" class="dock chat-popout-collapse" type="button"
+              title="收起聊天小窗" aria-label="收起聊天小窗">−</button>
+    </div>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+    <div id="status" class="status is-empty" role="status"></div>
+
+    <div id="input-shell" class="input-shell">
+      <textarea id="input" rows="1" placeholder="和八千代说点什么…" aria-label="输入消息"></textarea>
+      <div class="btn-slot">
+        <button id="btn-send" class="sendbtn" type="button" title="发送（回车）" aria-label="发送">&#x2191;</button>
+        <button id="btn-stop" class="stopbtn hidden" type="button" title="停止" aria-label="停止">&#x25A0;</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="tool-ask-overlay" class="overlay hidden" aria-hidden="true"></div>
+
+  <script src="/chat-popout.js"></script>
+</body>
+</html>

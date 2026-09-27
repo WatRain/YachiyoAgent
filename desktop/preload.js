@@ -83,4 +83,74 @@ contextBridge.exposeInMainWorld("yachiyoShell", {
       }
     });
   },
+
+  /* ── 角色旁聊天小窗 ──
+     WebSocket 仍由主窗口持有；小窗只提交用户输入并接收主窗口同步过来的气泡。 */
+  petChatOpen: (theme) => ipcRenderer.invoke("pet-chat:open", theme),
+  petChatClose: (reason) => ipcRenderer.invoke("pet-chat:close", reason),
+  petChatCollapse: () => ipcRenderer.send("pet-chat:collapse"),
+  setPetChatAvailable: (available) => ipcRenderer.send("pet-chat:availability", Boolean(available)),
+  petChatSend: (text) => ipcRenderer.send("pet-chat:send", String(text || "")),
+  petChatStop: () => ipcRenderer.send("pet-chat:stop"),
+  petChatReady: () => ipcRenderer.send("pet-chat:ready"),
+  petChatSnapshot: (payload) => ipcRenderer.send("pet-chat:snapshot", payload),
+  petChatEntry: (payload) => ipcRenderer.send("pet-chat:entry", payload),
+  petChatMeta: (payload) => ipcRenderer.send("pet-chat:meta", payload),
+  petChatAskTool: (payload) => ipcRenderer.send("pet-chat:tool-ask", payload),
+  petChatToolDecision: (id, ok) => ipcRenderer.send("pet-chat:tool-decision", { id, ok: Boolean(ok) }),
+  onPetChatSyncRequest: (callback) => {
+    ipcRenderer.on("pet-chat:sync-request", () => {
+      try { callback(); } catch { /* 忽略渲染同步错误 */ }
+    });
+  },
+  onPetChatOpenState: (callback) => {
+    ipcRenderer.on("pet-chat:open-state", (_event, open) => {
+      try { callback(Boolean(open)); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatAvailable: (callback) => {
+    ipcRenderer.on("pet:chat-availability", (_event, available) => {
+      try { callback(Boolean(available)); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatSnapshot: (callback) => {
+    ipcRenderer.on("pet-chat:snapshot", (_event, snapshot) => {
+      try { callback(snapshot || {}); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatEntry: (callback) => {
+    ipcRenderer.on("pet-chat:entry", (_event, entry) => {
+      try { callback(entry || {}); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatMeta: (callback) => {
+    ipcRenderer.on("pet-chat:meta", (_event, meta) => {
+      try { callback(meta || {}); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatToolAsk: (callback) => {
+    ipcRenderer.on("pet-chat:tool-ask", (_event, payload) => {
+      try { callback(payload || {}); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatToolDecision: (callback) => {
+    ipcRenderer.on("pet-chat:tool-decision", (_event, payload) => {
+      try { callback(payload || {}); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatSend: (callback) => {
+    ipcRenderer.on("pet-chat:send", (_event, text) => {
+      try { callback(String(text || "")); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatStop: (callback) => {
+    ipcRenderer.on("pet-chat:stop", () => {
+      try { callback(); } catch { /* 忽略 */ }
+    });
+  },
+  onPetChatClosed: (callback) => {
+    ipcRenderer.on("pet-chat:closed", (_event, info) => {
+      try { callback(info || {}); } catch { /* 忽略 */ }
+    });
+  },
 });

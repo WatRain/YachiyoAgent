@@ -853,6 +853,20 @@ body {
 .status.is-empty { opacity: 0; }
 .status.error { color: var(--danger); }
 
+.chat-location-note {
+  flex: none;
+  padding: 9px 12px;
+  border: 1px dashed var(--glass-border-hi);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--text-2);
+  text-align: center;
+  font-size: 11.5px;
+  line-height: 1.45;
+  animation: bubble-in var(--normal) var(--ease);
+}
+body.pet-chat-active #input-shell { display: none; }
+
 /* 输入区：一枚玻璃胶囊 */
 .input-shell {
   flex: none;
@@ -1193,6 +1207,7 @@ body.pet-detached .panel { display: none; }
 }
 .settings-panel[hidden] { display: none; }
 .settings-data-note { margin-top: -4px; }
+.chat-location-pref .seg { flex: none; }
 
 @media (max-width: 500px) {
   .settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1913,6 +1928,76 @@ body.oobe .titlebar .seg-theme { display: none; }
   /* 位移类反馈单独关掉：颜色 / 透明度的变化留着（那是信息本身），
      但"按下去缩一下""面板滑进来"这种位移最招人不适，关掉也不会少一个状态。 */
   :active { transform: none !important; }
+}
+
+/* ───────────────────────── 角色旁聊天小窗 ───────────────────────── */
+
+html.chat-popout-root,
+body.chat-popout-page {
+  background: transparent !important;
+}
+body.chat-popout-page {
+  padding: 8px;
+}
+.chat-popout-card {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 14px;
+  gap: 11px;
+  border-radius: 25px;
+  animation: chat-popout-in var(--normal) var(--spring);
+}
+@keyframes chat-popout-in {
+  from { opacity: 0; transform: translateY(7px) scale(.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.chat-popout-header {
+  justify-content: flex-start;
+  gap: 10px;
+  padding-bottom: 10px;
+  -webkit-app-region: drag;
+}
+.chat-popout-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .025em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-popout-collapse {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  font-size: 21px;
+  line-height: 1;
+}
+.chat-popout-page .messages {
+  gap: 11px;
+  overscroll-behavior: contain;
+}
+.chat-popout-page .bubble {
+  max-width: 96%;
+  padding: 10px 13px;
+  border-radius: 17px;
+  font-size: 13px;
+  line-height: 1.58;
+}
+.chat-popout-page .bubble.user { border-bottom-right-radius: 11px; }
+.chat-popout-page .bubble.bot { border-bottom-left-radius: 11px; }
+.chat-popout-page .status { min-height: 15px; font-size: 11px; }
+.chat-popout-page .input-shell { gap: 7px; padding-left: 11px; }
+.chat-popout-page #input { font-size: 13px; }
+.chat-popout-page .sendbtn,
+.chat-popout-page .stopbtn { width: 36px; height: 36px; }
+@media (max-height: 420px) {
+  .chat-popout-card { padding: 10px; gap: 7px; }
+  .chat-popout-header { padding-bottom: 7px; }
 }
 
 /* ───────────────────────── 工具 ───────────────────────── */

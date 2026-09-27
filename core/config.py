@@ -24,7 +24,7 @@ from core.paths import config_path
 log = logging.getLogger(__name__)
 
 # 改结构时 +1，并在 _migrate() 里写升级逻辑
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 Protocol = Literal["openai", "anthropic", "gemini", "custom"]
 
@@ -104,6 +104,8 @@ class AppConfig(BaseModel):
     # 只是"上次住在哪儿"的偏好：真正的窗口位置/大小存在 Electron 的 userData
     # （desktop/main.js 的 pet-window.json），那属于界面状态，不进这里。
     live2d_detached: bool = False
+    # 角色脱离桌面时，对话输入放在主窗口还是角色旁的小窗。
+    chat_location: Literal["main", "pet"] = "main"
 
     # 隐私政策 / 许可条款的同意记录（见 ConsentRecord）。
     # 这是**证据**，不是开关：界面上该拦还是拦，不看这个字段。
@@ -132,8 +134,12 @@ def _migrate(raw: dict) -> AppConfig:
         # 老配置升上来等于「从没调过工具」→ 直接就是安全档。
         raw.setdefault("tools", {})
 
+    if version < 4:
+        # 3 -> 4：加了对话窗口位置。老配置默认继续在主聊天窗口输入。
+        raw.setdefault("chat_location", "main")
+
     # 以后加字段的写法（示例）：
-    # if version < 4:
+    # if version < 5:
     #     raw["new_field"] = 默认值
 
     raw["schema_version"] = SCHEMA_VERSION

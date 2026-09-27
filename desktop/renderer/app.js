@@ -29,6 +29,9 @@ const state = {
   toolTask: null,
   themeMode: "system",      // system / light / dark，与后端 config.theme 同步
   petDetached: false,       // 角色是不是已经脱离到桌面浮窗（与 config.live2d_detached 同步）
+  chatLocation: "main",    // main / pet；角色脱离时可把输入切到角色旁的小窗
+  chatLocationRevision: 0,
+  petChatWindowOpen: false,
   panelBooted: false,       // 角色面板是不是已经放过出来了（引导期间先扣着，见 ensurePanel）
   settingsOpen: false,      // 设置浮层打开时暂停 Live2D 的鼠标视线跟随
 };
@@ -47,9 +50,66 @@ const ui = {
   shell: $("input-shell"),
   dot: $("dot"),
   panelStatus: $("panel-status"),
+  chatLocationNote: $("chat-location-note"),
   pet: $("pet"),
   overlay: $("overlay"),
 };
+
+let petChatSyncTimer = 0;
+let petChatLastEntries = [];
+
+function syncPetChat({ snapshot = false } = {}) {
+  const shell = window.yachiyoShell;
+  if (!shell || !state.petChatWindowOpen) return;
+  const entries = Array.from(ui.messages.children, (node) => node.outerHTML);
+  if (snapshot || entries.length < petChatLastEntries.length) {
+    shell.petChatSnapshot({ entries });
+  } else {
+    const count = Math.max(entries.length, petChatLastEntries.length);
+    const changes = [];
+    for (let index = 0; index < count; index++) {
+      if (entries[index] === petChatLastEntries[index]) continue;
+      if (entries[index] !== undefined) changes.push({ index, html: entries[index] });
+    }
+    // 大幅重排时一次性同步，避免发出一串过期索引。
+    if (changes.length > 8) shell.petChatSnapshot({ entries });
+    else for (const entry of changes) shell.petChatEntry(entry);
+  }
+  petChatLastEntries = entries;
+  shell.petChatMeta({
+    status: ui.status.textContent || "",
+    statusEmpty: ui.status.classList.contains("is-empty"),
+    isError: ui.status.classList.contains("error"),
+    busy: state.busy,
+    theme: document.documentElement.dataset.theme,
+  });
+}
+
+function schedulePetChatSync({ snapshot = false } = {}) {
+  if (!state.petChatWindowOpen) return;
+  if (petChatSyncTimer) clearTimeout(petChatSyncTimer);
+  petChatSyncTimer = setTimeout(() => {
+    petChatSyncTimer = 0;
+    syncPetChat({ snapshot });
+  }, 55);
+}
+
+function refreshChatLocationUi() {
+  const active = state.petDetached && state.chatLocation === "pet";
+  document.body.classList.toggle("pet-chat-active", active);
+  window.yachiyoShell?.setPetChatAvailable?.(active);
+  if (ui.chatLocationNote) ui.chatLocationNote.classList.toggle("hidden", !active);
+  for (const button of document.querySelectorAll("[data-chat-location]")) {
+    button.setAttribute("aria-checked", String(button.dataset.chatLocation === state.chatLocation));
+  }
+  const desc = $("chat-location-desc");
+  if (desc) {
+    desc.textContent = state.chatLocation === "pet"
+      ? "角色脱离桌面时，在她旁边的小窗中输入；主窗口仍同步显示记录"
+      : "在主聊天窗口中输入";
+  }
+  schedulePetChatSync();
+}
 
 // ───────────────────────── 外观（深色 / 浅色） ─────────────────────────
 
@@ -93,6 +153,7 @@ function applyTheme(mode, { persist = false } = {}) {
       setStatus(`外观没能存下来：${err.message}`, true);
     });
   }
+  schedulePetChatSync();
   logToShell(`外观：${want === "system" ? "跟随系统" : want === "dark" ? "深色" : "浅色"}（实际 ${resolved}）`);
 }
 
@@ -589,6 +650,7 @@ function setStatus(text, isError = false) {
   const next = text || "";
   if (!next) {
     ui.status.classList.add("is-empty");
+    schedulePetChatSync();
     statusFadeTimer = setTimeout(() => {
       if (ui.status.classList.contains("is-empty")) ui.status.textContent = "";
     }, 200);
@@ -596,6 +658,7 @@ function setStatus(text, isError = false) {
   }
   ui.status.textContent = next;
   ui.status.classList.remove("is-empty");
+  schedulePetChatSync();
 }
 
 function setBusy(busy) {
@@ -604,6 +667,7 @@ function setBusy(busy) {
   ui.stop.classList.toggle("hidden", !busy);
   ui.dot.classList.toggle("busy", busy);
   ui.shell.style.borderColor = busy ? "var(--accent)" : "var(--glass-border)";
+  schedulePetChatSync();
 }
 
 // ───────────────────────── 对话（WebSocket） ─────────────────────────
@@ -802,12 +866,12 @@ async function refreshRecall() {
   } catch { /* 记忆是锦上添花，失败就算了 */ }
 }
 
-function sendMessage() {
-  const text = (ui.input.value || "").trim();
-  if (!text || state.busy) return;
+function sendMessage(inputText = null) {
+  const text = (typeof inputText === "string" ? inputText : ui.input.value || "").trim();
+  if (!text || state.busy) return false;
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     setStatus("还没连上后端，稍等一下再试。", true);
-    return;
+    return false;
   }
 
   ui.input.value = "";
@@ -823,6 +887,7 @@ function sendMessage() {
   scrollDown();
 
   state.ws.send(JSON.stringify({ type: "user", text }));
+  return true;
 }
 
 function stopMessage() {
@@ -904,6 +969,13 @@ function setPetDetached(flag, why) {
   // 设置浮层正开着的时候也要跟着改（浮窗可能被右键菜单关掉，那时开关还亮着）
   const desc = $("pet-detach-desc");
   if (desc) desc.textContent = flag ? PET_DETACH_DESC_ON : PET_DETACH_DESC_OFF;
+  refreshChatLocationUi();
+  reconcilePetChatWindow().then((ok) => {
+    if (!ok && state.petDetached && state.chatLocation === "pet") {
+      setChatLocation("main", { quiet: false });
+      setStatus("角色旁的小窗没能打开，已切回主聊天窗口。", true);
+    }
+  });
   logToShell(`角色位置：${flag ? "桌面浮窗" : "右侧面板"}（${why}）`);
   // 只有真的和配置不一样才写一次，免得每次启动都回写。
   // 本地这份 cfg 也要跟着改：不然"脱离→收回"里收回那次判断出"没变化"，后端就一直留着 true。
@@ -914,6 +986,60 @@ function setPetDetached(flag, why) {
       if (state.cfg) state.cfg.live2d_detached = !flag;
     });
   }
+}
+
+function reconcilePetChatWindow() {
+  const want = state.petDetached && state.chatLocation === "pet";
+  const shell = window.yachiyoShell;
+  if (!want) {
+    const reason = state.petDetached ? "location-main" : "pet-docked";
+    try { shell?.petChatClose?.(reason); } catch { /* 窗口可能已关 */ }
+    return Promise.resolve(true);
+  }
+  if (!shell?.petChatOpen) return Promise.resolve(false);
+  return shell.petChatOpen(document.documentElement.dataset.theme)
+    .then((result) => Boolean(result && result.ok)).catch(() => false);
+}
+
+async function setChatLocation(location, { persist = true, quiet = false } = {}) {
+  const next = location === "pet" ? "pet" : "main";
+  const previous = state.chatLocation;
+  if (next === previous) {
+    refreshChatLocationUi();
+    const ok = await reconcilePetChatWindow();
+    if (!ok && next === "pet") return setChatLocation("main", { persist, quiet });
+    return ok;
+  }
+
+  const revision = ++state.chatLocationRevision;
+  state.chatLocation = next;
+  if (state.cfg) state.cfg.chat_location = next;
+  refreshChatLocationUi();
+
+  const ready = await reconcilePetChatWindow();
+  if (!ready && next === "pet") {
+    if (state.chatLocationRevision === revision) {
+      state.chatLocation = "main";
+      if (state.cfg) state.cfg.chat_location = "main";
+      refreshChatLocationUi();
+      reconcilePetChatWindow();
+      if (persist) api("/api/config", { method: "POST", body: { chat_location: "main" } }).catch(() => {});
+    }
+    if (!quiet) setStatus("角色旁的小窗没能打开，已切回主聊天窗口。", true);
+    return false;
+  }
+
+  if (persist) {
+    api("/api/config", { method: "POST", body: { chat_location: next } }).catch((err) => {
+      if (state.chatLocationRevision !== revision) return;
+      state.chatLocation = previous;
+      if (state.cfg) state.cfg.chat_location = previous;
+      refreshChatLocationUi();
+      reconcilePetChatWindow();
+      setStatus(`对话位置没能保存：${err.message}`, true);
+    });
+  }
+  return true;
 }
 
 async function detachPet(opts = {}) {
@@ -1162,22 +1288,46 @@ async function pollPanel() {
    （最多等 5 分钟，超时按拒绝算）。所以这个弹窗必须能"只靠键盘/只靠鼠标"
    关掉，而且点拒绝和点允许走同一条路。 */
 let toolAskId = null;
+let toolAskInPetChat = false;
+let forceMainToolAsk = false;
+let pendingToolAskMessage = null;
+
+function answerToolPermission(id, ok) {
+  if (toolAskId !== id) return;
+  const inPetChat = toolAskInPetChat;
+  toolAskId = null;
+  toolAskInPetChat = false;
+  forceMainToolAsk = false;
+  pendingToolAskMessage = null;
+  try {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: "tool_decision", id, ok: Boolean(ok) }));
+    }
+  } catch { /* 连接断了就算了，后端那边也会按拒绝收尾 */ }
+  if (!inPetChat) closeOverlay();
+}
 
 function askToolPermission(msg) {
   const id = String(msg.id || "");
   if (!id || toolAskId === id) return;
   toolAskId = id;
+  pendingToolAskMessage = msg;
 
-  const answer = (ok) => {
-    if (toolAskId !== id) return;        // 已经答过了（比如连点两下）
-    toolAskId = null;
-    try {
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: "tool_decision", id, ok }));
-      }
-    } catch { /* 连接断了就算了，后端那边也会按拒绝收尾 */ }
-    closeOverlay();
-  };
+  const answer = (ok) => answerToolPermission(id, ok);
+  if (!forceMainToolAsk && state.petDetached && state.chatLocation === "pet"
+      && window.yachiyoShell?.petChatAskTool) {
+    toolAskInPetChat = true;
+    forceMainToolAsk = false;
+    window.yachiyoShell.petChatAskTool({
+      id,
+      label: String(msg.label || msg.name || "工具"),
+      name: String(msg.name || ""),
+      preview: String(msg.preview || msg.name || ""),
+    });
+    return;
+  }
+  forceMainToolAsk = false;
+  toolAskInPetChat = false;
 
   showSheet((sheet) => {
     sheet.classList.add("tool-ask");
@@ -1462,6 +1612,7 @@ function providerForm(sheet, { provider = null, onSaved, actionsHost = null }) {
 async function reloadCore() {
   const data = await api("/api/bootstrap");
   state.cfg = data.config;
+  state.chatLocation = data.config?.chat_location === "pet" ? "pet" : "main";
   state.providers = data.providers || [];
   state.presets = data.presets || [];
   state.activeProvider = data.active_provider || "";
@@ -1609,12 +1760,35 @@ function openSettings() {
         <div class="switch ${state.petDetached ? "on" : ""}" id="pet-detach" role="switch"
              aria-checked="${state.petDetached}" aria-label="脱离到桌面" tabindex="0"></div>
       </div>
+      <div class="pref chat-location-pref">
+        <div class="pref-main">
+          <div class="label">对话位置</div>
+          <div class="desc" id="chat-location-desc"></div>
+        </div>
+        <div class="seg" role="radiogroup" aria-label="对话位置">
+          <button class="seg-btn" type="button" data-chat-location="main" role="radio" aria-checked="false">主窗口</button>
+          <button class="seg-btn" type="button" data-chat-location="pet" role="radio" aria-checked="false">角色旁</button>
+        </div>
+      </div>
       <div class="field">
         <label>浮窗大小</label>
         <input type="range" id="pet-size" min="50" max="200" step="5" value="100" />
         <div class="hint" id="pet-size-value">—</div>
       </div>`;
     const detachToggle = who.querySelector("#pet-detach");
+    const chatLocationButtons = [...who.querySelectorAll("[data-chat-location]")];
+    for (const [index, button] of chatLocationButtons.entries()) {
+      button.onclick = () => setChatLocation(button.dataset.chatLocation);
+      button.onkeydown = (event) => {
+        if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+        event.preventDefault();
+        const next = (index + (event.key === "ArrowRight" ? 1 : -1) + chatLocationButtons.length)
+          % chatLocationButtons.length;
+        chatLocationButtons[next].focus();
+        setChatLocation(chatLocationButtons[next].dataset.chatLocation);
+      };
+    }
+    refreshChatLocationUi();
     // 开关的视觉同步（.on / aria-checked / 说明文字）全在 setPetDetached 里做 ——
     // 浮窗被右键菜单关掉时走的也是那条路，放这儿会漏。
     const flipDetach = async () => {
@@ -2213,6 +2387,57 @@ window.yachiyoShell?.onPetClosed?.(() => {
   setPetDetached(false, "浮窗已关闭");
   setStatus("八千代回到面板里了");
 });
+window.yachiyoShell?.onPetChatOpenState?.((open) => {
+  const wasOpen = state.petChatWindowOpen;
+  state.petChatWindowOpen = open;
+  if (!open) {
+    petChatLastEntries = [];
+    if (petChatSyncTimer) clearTimeout(petChatSyncTimer);
+    petChatSyncTimer = 0;
+  }
+  else if (!wasOpen) schedulePetChatSync({ snapshot: true });
+});
+window.yachiyoShell?.onPetChatSyncRequest?.(() => {
+  state.petChatWindowOpen = true;
+  syncPetChat({ snapshot: true });
+});
+window.yachiyoShell?.onPetChatSend?.((text) => {
+  if (!state.petDetached || state.chatLocation !== "pet") return;
+  sendMessage(text);
+});
+window.yachiyoShell?.onPetChatStop?.(() => {
+  if (state.petDetached && state.chatLocation === "pet") stopMessage();
+});
+window.yachiyoShell?.onPetChatToolDecision?.(({ id, ok }) => answerToolPermission(String(id || ""), ok === true));
+window.yachiyoShell?.onPetChatClosed?.(({ reason }) => {
+  if (toolAskInPetChat && pendingToolAskMessage) {
+    const pending = pendingToolAskMessage;
+    toolAskInPetChat = false;
+    toolAskId = null;
+    forceMainToolAsk = true;
+    if (state.petDetached && state.chatLocation === "pet") {
+      setChatLocation("main", { quiet: true });
+    }
+    askToolPermission(pending);
+    return;
+  }
+  if (!state.petDetached || state.chatLocation !== "pet") return;
+  if (reason === "unexpected") {
+    setChatLocation("main", { quiet: true });
+    setStatus("角色旁聊天小窗已关闭，已切回主聊天窗口。", true);
+    return;
+  }
+  // 用户快速切换模式或收回后又脱离时，旧窗口的关闭事件可能晚于新选择；重新对齐一次。
+  setTimeout(() => {
+    if (!state.petDetached || state.chatLocation !== "pet") return;
+    reconcilePetChatWindow().then((ok) => {
+      if (!ok && state.petDetached && state.chatLocation === "pet") {
+        setChatLocation("main", { quiet: true });
+        setStatus("角色旁的小窗没能重新打开，已切回主聊天窗口。", true);
+      }
+    });
+  }, 120);
+});
 ui.send.onclick = sendMessage;
 ui.stop.onclick = stopMessage;
 ui.input.addEventListener("input", autoGrow);
@@ -2225,6 +2450,12 @@ ui.input.addEventListener("keydown", (event) => {
 });
 // 滚动条只在真的在滑动时露出来：平静的时候别在右边挂一条（样式见 style.css）
 markScrolling(ui.messages);
+new MutationObserver(() => schedulePetChatSync()).observe(ui.messages, {
+  childList: true,
+  subtree: true,
+  characterData: true,
+  attributes: true,
+});
 // 引导向导是**故意**模态的，点遮罩不放人：老版本这里允许点空白关掉引导，结果只关了浮层、
 // body.oobe 还挂着 —— 人进了聊天界面，角色面板却永远不会出现（等于绕过了"没配好不放人进去"）。
 // 现在只有配好 provider（onSaved → ensurePanel）才会放人。
