@@ -70,6 +70,12 @@
   --field-bg: rgba(255, 255, 255, .05);
   --field-bg-focus: rgba(255, 255, 255, .09);
   --track: rgba(255, 255, 255, .14);
+  --control-hover-bg: color-mix(in srgb, var(--accent) 9%, transparent);
+  --control-hover-border: var(--glass-border-hi);
+  --control-selected-border: color-mix(in srgb, var(--accent) 18%, var(--glass-border-hi));
+  --choice-selected-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --choice-selected-hover-bg: color-mix(in srgb, var(--accent) 24%, transparent);
+  --choice-selected-border: color-mix(in srgb, var(--accent) 58%, transparent);
   --scrim: rgba(7, 9, 14, .58);
   --hairline: rgba(255, 255, 255, .08);
 
@@ -154,27 +160,27 @@
 
   --glass-fill: linear-gradient(155deg, rgba(255, 255, 255, .52), rgba(255, 255, 255, .32));
   --glass-fill-solid: rgba(255, 255, 255, .82);
-  --glass-border: rgba(255, 255, 255, .85);
-  --glass-border-hi: rgba(255, 255, 255, .95);
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 1);
-  --glass-sheen: linear-gradient(115deg, rgba(255, 255, 255, .9), rgba(255, 255, 255, 0) 46%);
+  --glass-border: rgba(67, 85, 121, .16);
+  --glass-border-hi: rgba(67, 85, 121, .26);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, .9);
+  --glass-sheen: linear-gradient(115deg, rgba(255, 255, 255, .68), rgba(255, 255, 255, 0) 46%);
   --shadow-lg: 0 24px 60px rgba(38, 54, 92, .18);
   --shadow-md: 0 10px 28px rgba(38, 54, 92, .13);
-  --shadow-sm: 0 4px 14px rgba(38, 54, 92, .10);
+  --shadow-sm: 0 4px 14px rgba(38, 54, 92, .12);
 
-  --seg-bg: rgba(255, 255, 255, .5);
-  --seg-on: rgba(255, 255, 255, .95);
-  --field-bg: rgba(255, 255, 255, .62);
-  --field-bg-focus: rgba(255, 255, 255, .9);
-  --track: rgba(20, 30, 60, .12);
+  --seg-bg: rgba(67, 85, 121, .075);
+  --seg-on: rgba(255, 255, 255, .94);
+  --field-bg: rgba(67, 85, 121, .06);
+  --field-bg-focus: rgba(255, 255, 255, .84);
+  --track: rgba(67, 85, 121, .2);
   --scrim: rgba(228, 234, 245, .62);
-  --hairline: rgba(20, 30, 60, .10);
+  --hairline: rgba(67, 85, 121, .12);
 
   /* 固定助手气泡底色，避免透出后方亮度变化，让同一行正文看起来深浅不一。 */
   --bubble-bot: rgba(248, 250, 254, .96);
-  --bubble-bot-border: rgba(255, 255, 255, .9);
+  --bubble-bot-border: rgba(67, 85, 121, .14);
   --bubble-user: linear-gradient(150deg, #F0D49A, #E2BC74);
-  --bubble-user-border: rgba(255, 255, 255, .7);
+  --bubble-user-border: rgba(154, 107, 30, .28);
   --bubble-user-text: #2A1F0B;
   --code-bg: rgba(23, 38, 74, .08);
 
@@ -411,7 +417,7 @@ body {
   inset: -4px;
   border-radius: var(--r-sm);
 }
-.winbtn:hover { background: var(--seg-on); color: var(--text); }
+.winbtn:hover { background: var(--control-hover-bg); color: var(--text); }
 .winbtn:active { transform: scale(.96); }
 .winbtn.close:hover { background: var(--danger); color: #fff; }
 
@@ -430,7 +436,7 @@ body {
 }
 .seg-btn {
   position: relative;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-2);
   font: inherit;
@@ -439,7 +445,7 @@ body {
   padding: 7px 12px;
   border-radius: var(--r-pill);
   cursor: pointer;
-  transition: background var(--normal) var(--ease), color var(--normal) var(--ease),
+  transition: background var(--normal) var(--ease), border-color var(--normal) var(--ease), color var(--normal) var(--ease),
               transform var(--press) var(--spring), scale var(--fast) var(--spring);
 }
 /* 命中区补高：分段控件本身矮（~26px），上下各外扩 7px 到 40px —— 正好顶到标题栏上下边，
@@ -451,11 +457,16 @@ body {
   inset: -7px 0;
   border-radius: var(--r-pill);
 }
-.seg-btn:hover { color: var(--text); }
+.seg-btn:hover {
+  color: var(--text);
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+}
 .seg-btn:active { transform: scale(.96); }
 .seg-btn[aria-checked="true"] {
   background: var(--seg-on);
   color: var(--text);
+  border-color: var(--control-selected-border);
   box-shadow: var(--glass-rim), var(--shadow-sm);
 }
 .seg-theme .seg-btn { padding: 6px 10px; font-size: 13px; }
@@ -531,7 +542,7 @@ body {
   line-height: 1;
   cursor: pointer;
   box-shadow: var(--glass-rim);
-  transition: background var(--fast) var(--ease), color var(--fast) var(--ease),
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease),
               transform var(--press) var(--spring);
 }
 /* 34px 的方块在 40px 的头部里：向外各扩 3px 补到 40（相邻元素间距 12px，够） */
@@ -541,7 +552,7 @@ body {
   inset: -3px;
   border-radius: var(--r-sm);
 }
-.dock:hover { background: var(--seg-on); color: var(--text); }
+.dock:hover { background: var(--control-hover-bg); border-color: var(--control-hover-border); color: var(--text); }
 .dock:active { transform: scale(.96); }
 
 /* 消息列表：上下边缘做淡出（Liquid Glass 的 scroll edge effect） */
@@ -824,7 +835,7 @@ body {
   transition: color var(--fast) var(--ease), background var(--fast) var(--ease),
               border-color var(--fast) var(--ease);
 }
-.bubble .code-copy:hover { color: var(--text); background: var(--glass-fill); border-color: var(--glass-border); }
+.bubble .code-copy:hover { color: var(--text); background: var(--control-hover-bg); border-color: var(--control-hover-border); }
 .bubble .code-copy.bad { color: var(--danger); }
 .bubble pre {
   background: none;
@@ -891,6 +902,7 @@ body.pet-chat-active #input-shell { display: none; }
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   box-shadow: var(--glass-rim), 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
 }
+.input-shell:not(:focus-within):hover { border-color: var(--control-hover-border); }
 
 #input {
   flex: 1;
@@ -960,6 +972,7 @@ body.pet-chat-active #input-shell { display: none; }
   color: var(--danger);
   border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
 }
+.stopbtn:hover { background: color-mix(in srgb, var(--danger) 24%, transparent); }
 
 /* ───────────────────────── 角色面板 ───────────────────────── */
 
@@ -1184,14 +1197,18 @@ body.pet-detached .panel { display: none; }
   transition: color var(--fast) var(--ease), background var(--fast) var(--ease),
               border-color var(--fast) var(--ease), transform var(--press) var(--spring);
 }
-.settings-tab:hover { color: var(--text); background: color-mix(in srgb, var(--seg-on) 55%, transparent); }
+.settings-tab:hover {
+  color: var(--text);
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+}
 .settings-tab:active { transform: scale(.97); }
 .settings-tab.on,
 .settings-tab[aria-selected="true"] {
   color: var(--text);
   background: var(--seg-on);
-  border-color: var(--glass-border-hi);
-  box-shadow: var(--glass-rim);
+  border-color: var(--control-selected-border);
+  box-shadow: var(--glass-rim), var(--shadow-sm);
 }
 .settings-tab:focus-visible {
   outline: none;
@@ -1221,7 +1238,32 @@ body.pet-detached .panel { display: none; }
 }
 
 @media (max-width: 600px) {
-  .settings-sheet .settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-sheet .settings-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .settings-sheet .settings-tab {
+    background: var(--field-bg);
+    border-color: var(--glass-border);
+  }
+  .settings-sheet .settings-tab:hover {
+    background: var(--control-hover-bg);
+    border-color: var(--control-hover-border);
+  }
+  .settings-sheet .settings-tab.on,
+  .settings-sheet .settings-tab[aria-selected="true"] {
+    background: var(--seg-on);
+    border-color: var(--control-selected-border);
+    box-shadow: var(--glass-rim), var(--shadow-sm);
+  }
+  .settings-sheet .settings-tab:focus-visible {
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    box-shadow: var(--glass-rim), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+  }
   .settings-sheet .pref {
     align-items: flex-start;
     flex-wrap: wrap;
@@ -1278,6 +1320,9 @@ body.pet-detached .panel { display: none; }
               box-shadow var(--normal) var(--ease);
 }
 .field input::placeholder { color: var(--text-3); }
+.field input:not([type="range"]):not(:focus):hover,
+.field select:not(:focus):hover,
+.field textarea:not(:focus):hover { border-color: var(--control-hover-border); }
 .field input:focus, .field select:focus, .field textarea:focus {
   background: var(--field-bg-focus);
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
@@ -1361,18 +1406,16 @@ select:open::picker(select) { opacity: 1; transform: none; }
   cursor: pointer;
   transition: background var(--fast) var(--ease);
 }
-/* 悬停反馈：不能用 --seg-on（浅色主题里它是 rgba(255,255,255,.95)，压在 82% 白的弹出层上
-   等于没变化，实测那一行 rgb(254,254,255) → rgb(255,255,255)）；也不用 --text 混出来的纯灰
-   —— 浅色下那块灰看着像一块阴影，跟旁边的选中行粘在一起。改用强调色调，比选中态轻一档。 */
+/* 下拉菜单的悬停、选中与其他控件共用强调色状态，避免浅色主题里白底悬停不可见。 */
 .field select option:hover,
 .field select option:focus-visible {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  background: var(--control-hover-bg);
   outline: none;
 }
-.field select option:checked { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.field select option:checked { background: var(--choice-selected-bg); }
 /* 鼠标停在「自己选中的那一行」上也必须有变化：:checked 写在 :hover 后面会把它盖掉 */
 .field select option:checked:hover {
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: var(--choice-selected-hover-bg);
 }
 .field select option::checkmark {
   order: 1;
@@ -1432,7 +1475,10 @@ select:open::picker(select) { opacity: 1; transform: none; }
   inset: -4px 0;
   border-radius: var(--r-md);
 }
-.btn:hover { background: var(--seg-on); }
+.btn:not(:disabled):hover {
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+}
 .btn:active { transform: scale(.96); }
 .btn.primary {
   background: linear-gradient(150deg, var(--accent-2), var(--accent));
@@ -1471,11 +1517,14 @@ select:open::picker(select) { opacity: 1; transform: none; }
   inset: -4px -3px;
   border-radius: var(--r-pill);
 }
-.chip:hover { background: var(--seg-on); }
+.chip:hover {
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+}
 .chip:active { transform: scale(.96); }
 .chip.on {
-  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: var(--choice-selected-border);
+  background: var(--choice-selected-bg);
   box-shadow: var(--glass-rim), 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .chip .sub { color: var(--text-3); font-size: 11px; margin-left: 6px; }
@@ -1497,8 +1546,11 @@ select:open::picker(select) { opacity: 1; transform: none; }
   background: var(--track);
   cursor: pointer;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18);
-  transition: background var(--normal) var(--ease), border-color var(--normal) var(--ease);
+  transition: background var(--normal) var(--ease), border-color var(--normal) var(--ease),
+              filter var(--fast) var(--ease);
 }
+.switch:hover { border-color: var(--control-hover-border); }
+.switch.on:hover { filter: brightness(1.05); }
 /* 命中区：开关本体只有 27px 高，上下各补 7px 到 41px（偏好行内边距 12px，够伸展） */
 .switch::before {
   content: "";
@@ -1884,11 +1936,14 @@ body.oobe .titlebar .seg-theme { display: none; }
   transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
               transform var(--press) var(--ease);
 }
-.setup-theme:hover { background: var(--seg-on); }
+.setup-theme:hover {
+  background: var(--control-hover-bg);
+  border-color: var(--control-hover-border);
+}
 .setup-theme:active { transform: scale(.985); }
 .setup-theme.on {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--choice-selected-border);
+  background: var(--choice-selected-bg);
 }
 .setup-theme .txt { display: flex; flex-direction: column; }
 .setup-theme .t { font-size: 13.5px; }
@@ -1938,7 +1993,7 @@ body.oobe .titlebar .seg-theme { display: none; }
 .setup-actions { display: flex; align-items: center; gap: var(--gap-sm); }
 .setup-foot .btn { padding: 10px 22px; border-radius: var(--r-pill); }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
-.btn.ghost:hover { background: var(--seg-on); color: var(--text); }
+.btn.ghost:hover { background: var(--control-hover-bg); border-color: var(--control-hover-border); color: var(--text); }
 .setup-foot .is-off { display: none !important; }
 
 /* ───────────────────────── 无障碍 / 动效克制 ───────────────────────── */
