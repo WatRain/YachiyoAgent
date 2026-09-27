@@ -39,6 +39,7 @@ const state = {
 const STAGE_WIDTH = 380;
 const STAGE_HEIGHT = 680;
 const THROTTLE_MS = 40;          // 流式刷新节流：模型逐字吐得比屏幕刷新快，40ms 够顺滑又不会抖
+const PET_CHAT_SYNC_MS = 32;      // 小窗同步按固定帧率合并，流式输出时不重置等待时间
 
 const $ = (id) => document.getElementById(id);
 const ui = {
@@ -57,6 +58,7 @@ const ui = {
 
 let petChatSyncTimer = 0;
 let petChatLastEntries = [];
+let petChatSyncNeedsSnapshot = false;
 
 function syncPetChat({ snapshot = false } = {}) {
   const shell = window.yachiyoShell;
@@ -87,11 +89,19 @@ function syncPetChat({ snapshot = false } = {}) {
 
 function schedulePetChatSync({ snapshot = false } = {}) {
   if (!state.petChatWindowOpen) return;
-  if (petChatSyncTimer) clearTimeout(petChatSyncTimer);
+  petChatSyncNeedsSnapshot = petChatSyncNeedsSnapshot || snapshot;
+  if (petChatSyncTimer) return;
   petChatSyncTimer = setTimeout(() => {
-    petChatSyncTimer = 0;
-    syncPetChat({ snapshot });
-  }, 55);
+    flushPetChatSync();
+  }, Math.min(PET_CHAT_SYNC_MS, THROTTLE_MS));
+}
+
+function flushPetChatSync({ snapshot = false } = {}) {
+  if (petChatSyncTimer) clearTimeout(petChatSyncTimer);
+  petChatSyncTimer = 0;
+  const needsSnapshot = petChatSyncNeedsSnapshot || snapshot;
+  petChatSyncNeedsSnapshot = false;
+  syncPetChat({ snapshot: needsSnapshot });
 }
 
 function refreshChatLocationUi() {
@@ -520,6 +530,8 @@ function addBubble(text, { role = "bot", animate = true } = {}) {
 
 function setBubbleText(node, text) {
   node.content.innerHTML = mdToHtml(text === "" ? " " : text);
+  // 助手回复的气泡每次流式刷新后立刻同步到小窗，避免等待异步 DOM 观察器。
+  flushPetChatSync();
 }
 
 function scrollDown() {
@@ -2409,6 +2421,7 @@ window.yachiyoShell?.onPetChatOpenState?.((open) => {
   state.petChatWindowOpen = open;
   if (!open) {
     petChatLastEntries = [];
+    petChatSyncNeedsSnapshot = false;
     if (petChatSyncTimer) clearTimeout(petChatSyncTimer);
     petChatSyncTimer = 0;
   }
@@ -2416,7 +2429,7 @@ window.yachiyoShell?.onPetChatOpenState?.((open) => {
 });
 window.yachiyoShell?.onPetChatSyncRequest?.(() => {
   state.petChatWindowOpen = true;
-  syncPetChat({ snapshot: true });
+  flushPetChatSync({ snapshot: true });
 });
 window.yachiyoShell?.onPetChatSend?.((text) => {
   if (!state.petDetached || state.chatLocation !== "pet") return;
