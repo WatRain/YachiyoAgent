@@ -1782,8 +1782,7 @@ function openSettings() {
     appearancePanel.appendChild(look);
     applyTheme(state.themeMode || state.cfg?.theme || "system");   // 把当前选中态刷到刚建好的开关上
 
-    // 角色：显示的是模型目录名。模型是美术作品，版权与代码无关 ——
-    // 用官方样例模型分发时，版权声明就该出现在用户看得到的地方。
+    // 角色使用面向用户的名称；模型来源链接直接指向雪熊企划的 B 站主页。
     const modelName = (state.live2d && state.live2d.name) || "";
     const who = document.createElement("div");
     who.className = "sect";
@@ -1791,9 +1790,9 @@ function openSettings() {
       <div class="sect-title">角色</div>
       <div class="pref">
         <div class="pref-main">
-          <div class="label">${modelName ? escapeHtml(modelName) : "还没有模型"}</div>
+          <div class="label">${modelName ? "月见八千代" : "还没有模型"}</div>
           <div class="desc">${modelName
-            ? "Live2D 模型，版权归模型作者"
+            ? '模型来自 <a class="model-credit-link" href="https://space.bilibili.com/3546783265327964" target="_blank" rel="noopener noreferrer">雪熊企划</a>'
             : "没有找到模型 —— 往 models/ 里放一个"}</div>
         </div>
       </div>

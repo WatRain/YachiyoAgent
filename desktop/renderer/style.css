@@ -1296,6 +1296,18 @@ body.pet-detached .panel { display: none; }
 }
 .pref .label { font-size: 13.5px; letter-spacing: .02em; }
 .pref .desc { font-size: 11.5px; color: var(--text-3); line-height: 1.5; margin-top: 2px; }
+.model-credit-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text-3) 55%, transparent);
+  text-underline-offset: 2px;
+  transition: color var(--fast) var(--ease), text-decoration-color var(--fast) var(--ease);
+}
+.model-credit-link:hover,
+.model-credit-link:focus-visible {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
 .pref .pref-main { min-width: 0; }
 
 .field-group { display: flex; flex-direction: column; gap: var(--gap-lg); }
