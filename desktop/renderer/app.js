@@ -1334,6 +1334,7 @@ async function pollPanel() {
       setPanelStatus("模型就绪", { flash: true });
       logToShell("Live2D 面板就绪：" + JSON.stringify({
         canvas: info.canvas, model: info.model, physics: info.physics,
+        physicsFps: info.physicsFps,
         autoTick: info.autoTick, mouthPath: info.mouthPath,
         diag: (info.diag || []).slice(-12),
       }));
@@ -1342,7 +1343,7 @@ async function pollPanel() {
     // 还是别的问题（renderedEye 是渲染那一刻模型里真正的眼球参数）。
     if (now - lastStatsLog > 15000) {
       lastStatsLog = now;
-      logToShell(`面板统计：${fps || "-"} fps 物理=${info.physics ? "开" : "关"}`
+      logToShell(`面板统计：${fps || "-"} fps 物理=${info.physics ? `开/${info.physicsFps || "?"}Hz` : "关"}`
                  + ` 视线目标=${JSON.stringify(info.look)}`
                  + ` 渲染中的眼球=${JSON.stringify(info.renderedEye)}`
                  + ` 帧计数=${info.frames}`);

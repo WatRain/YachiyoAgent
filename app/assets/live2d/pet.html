@@ -129,6 +129,7 @@
     tickerAlive: null,
     theme: null,           // 当前主题（dark/light），只作诊断 —— 底色透明与否由祖先 color-scheme 决定
     physics: null,         // 物理（头发/衣摆）在不在跑：false 换帧率
+    physicsFps: null,      // 物理求解步频；低于渲染帧率时由 Cubism 在相邻结果间插值
     deps: {},
   };
 
@@ -209,6 +210,7 @@ const CORE_URL = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.
 
 const MOUTH_PARAM = "ParamMouthOpenY";
 const WORK_MEMORY_MB = 32;      // 模型 796 个参数，默认 16MB 容易不够
+const PHYSICS_FPS_CAP = 50;     // 轻量降低物理开销；Cubism 会在物理步之间插值输出
 
 let app = null;
 let model = null;
@@ -541,13 +543,22 @@ async function start() {
     if (!im) return false;
     if (im.physics) physicsSaved = im.physics;
     im.physics = on ? (physicsSaved || im.physics || null) : null;
+    const physicsRig = im.physics && im.physics._physicsRig;
+    if (physicsRig && Number.isFinite(physicsRig.fps)) {
+      if (physicsRig.fps > PHYSICS_FPS_CAP) physicsRig.fps = PHYSICS_FPS_CAP;
+      state.physicsFps = physicsRig.fps;
+    } else {
+      state.physicsFps = null;
+    }
     state.physics = Boolean(im.physics);
     return state.physics;
   }
 
   const wantPhysics = new URLSearchParams(location.search).get("physics") !== "0";
   const physicsOn = applyPhysics(wantPhysics);
-  say("物理：" + (physicsOn ? "开（头发/衣摆会摆）" : "关（为了帧率）"));
+  say("物理：" + (physicsOn
+    ? `开（头发/衣摆会摆，${state.physicsFps || "原生"}Hz 求解）`
+    : "关（为了帧率）"));
 
   state.stage = "fitting";
   fit();
