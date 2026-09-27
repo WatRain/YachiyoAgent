@@ -36,6 +36,7 @@ const WINDOW_HEIGHT = 800;
 const WINDOW_MIN_WIDTH = 720;
 const WINDOW_MIN_HEIGHT = 560;
 const BG = "#121215";
+const WINDOW_ICON = path.join(__dirname, "assets", "icon.ico");
 
 // 鼠标位置轮询的间隔（毫秒）。角色的视线跟着它走 ——
 // 为什么不让渲染进程自己监听 mousemove：面板是 iframe，指针在 iframe 上时
@@ -432,6 +433,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
+    icon: WINDOW_ICON,
     minWidth: WINDOW_MIN_WIDTH,
     minHeight: WINDOW_MIN_HEIGHT,
     frame: false,                 // 原生标题栏关掉，界面自己画一条（renderer/index.html 里的 .titlebar）

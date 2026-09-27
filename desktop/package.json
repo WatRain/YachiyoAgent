@@ -32,6 +32,8 @@
       "preload.js",
       "backend.js",
       "renderer/**/*",
+      "assets/icon.ico",
+      "assets/icon.png",
       "package.json"
     ],
     "extraResources": [
@@ -41,6 +43,7 @@
       }
     ],
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         "nsis"
       ],
