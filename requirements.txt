@@ -19,9 +19,6 @@ uvicorn>=0.30
 # 统一的模型调用层（支持任意 OpenAI 兼容端点）
 litellm>=1.100
 
-# 异步 SQLite（给会话/记忆落库用）
-aiosqlite>=0.20
-
 # 配置校验
 pydantic>=2.10,<3
 

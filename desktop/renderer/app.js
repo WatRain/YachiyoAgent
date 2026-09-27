@@ -2290,7 +2290,6 @@ function openSetup() {
                 <li><span class="n">anyio</span><span class="l">MIT</span></li>
                 <li><span class="n">websockets</span><span class="l">BSD-3</span></li>
                 <li><span class="n">httpx</span><span class="l">BSD-3</span></li>
-                <li><span class="n">aiosqlite</span><span class="l">MIT</span></li>
                 <li><span class="n">Pillow</span><span class="l">MIT-CMU</span></li>
                 <li><span class="n">certifi</span><span class="l">MPL-2.0</span></li>
                 <li><span class="n">tiktoken</span><span class="l">MIT</span></li>
