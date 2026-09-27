@@ -229,11 +229,31 @@ body {
   transition: background var(--slow) var(--ease), color var(--slow) var(--ease);
 }
 
+/* 主题令牌一次改动会影响整棵界面树。切换这两帧里停掉所有过渡，避免数百个颜色/背景同时动画。 */
+:root.theme-switching,
+:root.theme-switching *,
+:root.theme-switching *::before,
+:root.theme-switching *::after {
+  transition: none !important;
+}
+
 .hidden { display: none !important; }
 .grow { flex: 1; }
 .row { display: flex; gap: var(--gap-sm); align-items: center; }
 .row.wrap { flex-wrap: wrap; }
 .tnum { font-variant-numeric: tabular-nums; }
+
+/* 主题是同一界面的两种光线：用短促的整页溶接承接变化，不让各控件分批变色。 */
+::view-transition-group(root),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 160ms;
+  animation-timing-function: cubic-bezier(.22, .61, .36, 1);
+}
+::view-transition-old(root) { animation-name: theme-view-out; }
+::view-transition-new(root) { animation-name: theme-view-in; }
+@keyframes theme-view-out { to { opacity: 0; } }
+@keyframes theme-view-in { from { opacity: 0; } }
 
 :focus-visible {
   outline: 2px solid var(--accent);

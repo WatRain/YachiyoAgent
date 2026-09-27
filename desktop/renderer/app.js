@@ -129,6 +129,7 @@ function refreshChatLocationUi() {
  * theme），所以换主题是持久的；界面只负责把 <html data-theme> 和开关状态对齐。
  * 所有颜色都写在 style.css 的令牌里，这里不碰具体色值。 */
 const THEME_MODES = ["system", "light", "dark"];
+let themeSwitchRevision = 0;
 
 function systemPrefersDark() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -144,10 +145,34 @@ function applyTheme(mode, { persist = false } = {}) {
   const want = THEME_MODES.includes(mode) ? mode : "system";
   const resolved = resolveTheme(want);
   state.themeMode = want;
-  document.documentElement.dataset.theme = resolved;
+  const root = document.documentElement;
+  const visualChange = root.dataset.theme !== resolved;
+  if (visualChange) {
+    const revision = ++themeSwitchRevision;
+    root.classList.add("theme-switching");
+    const releaseSwitchGuard = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (revision === themeSwitchRevision) root.classList.remove("theme-switching");
+    }));
+    if (typeof document.startViewTransition === "function"
+        && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      try {
+        const transition = document.startViewTransition(() => {
+          root.dataset.theme = resolved;
+        });
+        // 等主题更新进入新快照后再恢复普通控件的交互过渡。
+        transition.updateCallbackDone.then(releaseSwitchGuard, releaseSwitchGuard);
+      } catch {
+        root.dataset.theme = resolved;
+        releaseSwitchGuard();
+      }
+    } else {
+      root.dataset.theme = resolved;
+      releaseSwitchGuard();
+    }
+  }
   // 角色页也要跟着换（浮窗里那份走 IPC，见 petCall）。它靠 color-scheme 决定底色透明还是近白
   petCall("setTheme", [resolved]);
-  throttlePetDuringTheme();
+  if (visualChange) throttlePetDuringTheme();
 
   // 标题栏的快捷开关 + 设置里的三选一，都是 data-theme-set，一起对齐
   for (const btn of document.querySelectorAll("[data-theme-set]")) {
