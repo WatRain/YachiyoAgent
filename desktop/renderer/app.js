@@ -78,10 +78,12 @@ function syncPetChat({ snapshot = false } = {}) {
     else for (const entry of changes) shell.petChatEntry(entry);
   }
   petChatLastEntries = entries;
+  const toolStatus = state.toolTask ? (ui.status.textContent || "") : "";
   shell.petChatMeta({
-    status: ui.status.textContent || "",
-    statusEmpty: ui.status.classList.contains("is-empty"),
-    isError: ui.status.classList.contains("error"),
+    // 小窗只显示模型正在调用工具的提示，不转发收回角色、记忆数等普通状态。
+    status: toolStatus,
+    statusEmpty: !toolStatus,
+    isError: Boolean(toolStatus && ui.status.classList.contains("error")),
     busy: state.busy,
     theme: document.documentElement.dataset.theme,
   });
@@ -651,12 +653,13 @@ function resetToolCalls() {
 }
 
 let statusFadeTimer = 0;
+let activeToolStatus = "";
 
 /* 状态行的动效（约定见 style.css 末尾）：进场直接淡入，退场必须先把文字留着淡完再清空 ——
    一置空就什么都看不见了，那文字就是"啪"地没的。整行高度固定，淡出不会让输入框跳。
    同一个函数被连着调用（比如 onopen 清空、紧接着 onclose 报错）也安全：
    新的文字会把正在淡出的那一层原地"接住"重新淡入。 */
-function setStatus(text, isError = false) {
+function renderStatus(text, isError = false) {
   clearTimeout(statusFadeTimer);
   ui.status.classList.toggle("error", Boolean(isError));
   const next = text || "";
@@ -671,6 +674,16 @@ function setStatus(text, isError = false) {
   ui.status.textContent = next;
   ui.status.classList.remove("is-empty");
   schedulePetChatSync();
+}
+
+// 聊天状态行只显示工具调用提示；其他通用状态、成功信息和错误都不显示。
+function setStatus(_text, _isError = false) {
+  renderStatus(activeToolStatus);
+}
+
+function setToolStatus(text) {
+  activeToolStatus = text || "";
+  renderStatus(activeToolStatus);
 }
 
 function setBusy(busy) {
@@ -690,6 +703,8 @@ function connectWs() {
   ws.onopen = () => setStatus("");
   ws.onclose = () => {
     state.ws = null;
+    state.toolTask = null;
+    setToolStatus("");
     setBusy(false);
     setStatus("和后端的连接断了，正在重连…", true);
     setTimeout(connectWs, 1500);
@@ -817,12 +832,12 @@ function onWsEvent(msg) {
     }
     case "tool_start":
       state.toolTask = msg.name;
-      setStatus(`正在用「${msg.label || msg.name}」…`);
+      setToolStatus(`正在用「${msg.label || msg.name}」…`);
       addToolCall(msg);
       break;
     case "tool_end":
       state.toolTask = null;
-      setStatus("");
+      setToolStatus("");
       finishToolCall(msg);
       break;
     case "live2d_control":
@@ -863,6 +878,8 @@ function onWsEvent(msg) {
 }
 
 function finishTurn() {
+  state.toolTask = null;
+  setToolStatus("");
   setBusy(false);
   scrollDown();
   setTimeout(() => { if (!state.busy) setStatus(""); }, 1200);
