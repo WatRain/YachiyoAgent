@@ -33,6 +33,8 @@ const PACKAGED_MODELS = path.join(process.resourcesPath || "", "models");
 
 const WINDOW_WIDTH = 960;
 const WINDOW_HEIGHT = 800;
+const WINDOW_MIN_WIDTH = 720;
+const WINDOW_MIN_HEIGHT = 560;
 const BG = "#121215";
 
 // 鼠标位置轮询的间隔（毫秒）。角色的视线跟着它走 ——
@@ -108,6 +110,8 @@ let petChatCloseReason = null;
 let petChatIsReady = false;
 let pendingPetChatToolAsks = [];
 let petChatEnabled = false;
+let attachedWindowBounds = null;
+let usesDetachedPetLayout = false;
 
 function updatePetChatLauncherAvailability() {
   if (!petWin || petWin.isDestroyed()) return;
@@ -428,8 +432,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
-    minWidth: 720,
-    minHeight: 560,
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     frame: false,                 // 原生标题栏关掉，界面自己画一条（renderer/index.html 里的 .titlebar）
     backgroundColor: BG,
     show: false,                  // 等 ready-to-show，免得看到白屏闪一下
@@ -500,6 +504,33 @@ ipcMain.on("gaze:pause", (_event, paused) => {
 
 ipcMain.on("win:minimize", () => {
   if (win && !win.isDestroyed()) win.minimize();
+});
+
+ipcMain.handle("win:pet-detached-layout", (event, payload) => {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) return { ok: false };
+  const detached = Boolean(payload && payload.detached);
+  if (detached) {
+    if (!usesDetachedPetLayout) {
+      attachedWindowBounds = win.getBounds();
+      usesDetachedPetLayout = true;
+    }
+    const requestedWidth = Number(payload.width);
+    const bounds = win.getBounds();
+    if (Number.isFinite(requestedWidth) && requestedWidth > 0) {
+      const width = Math.max(240, Math.round(requestedWidth));
+      win.setMinimumSize(width, WINDOW_MIN_HEIGHT);
+      win.setBounds({ ...bounds, width });
+    }
+    return { ok: true, bounds: win.getBounds() };
+  }
+
+  if (usesDetachedPetLayout) {
+    win.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT);
+    if (attachedWindowBounds) win.setBounds(attachedWindowBounds);
+    attachedWindowBounds = null;
+    usesDetachedPetLayout = false;
+  }
+  return { ok: true, bounds: win.getBounds() };
 });
 
 ipcMain.on("win:close", () => {

@@ -954,12 +954,28 @@ const PET_DETACH_DESC_OFF = "让八千代从右侧面板里出来，变成桌面
  * 是白烧 GPU（一份就已经把主线程吃到 99%）。收回来时按当前主题重新装一次。 */
 function setPetDetached(flag, why) {
   if (state.petDetached === flag) return;
+  const chatWidth = flag ? (() => {
+    const chat = ui.messages.closest(".chat");
+    const body = document.querySelector(".body");
+    if (!chat || !body) return window.innerWidth;
+    const style = getComputedStyle(body);
+    const horizontalPadding = Number.parseFloat(style.paddingLeft || "0")
+      + Number.parseFloat(style.paddingRight || "0");
+    return Math.ceil(chat.getBoundingClientRect().width + horizontalPadding);
+  })() : 0;
   state.petDetached = flag;
   document.body.classList.toggle("pet-detached", flag);
   if (flag) {
     try { ui.pet.src = "about:blank"; } catch { /* 忽略 */ }
   } else if (state.live2d && state.live2d.ready) {
     ui.pet.src = petPageUrl(false);
+  }
+  try {
+    window.yachiyoShell?.setPetDetachedLayout?.(flag, chatWidth)?.catch?.(() => {
+      logToShell("主窗口尺寸调整没有完成");
+    });
+  } catch {
+    logToShell("主窗口尺寸调整没有完成");
   }
   const toggle = $("pet-detach");
   if (toggle) {
@@ -1635,6 +1651,7 @@ function openSettings() {
     const active = state.providers.find((p) => p.id === state.activeProvider);
 
     sheet.innerHTML = `<h2>设置</h2>`;
+    sheet.classList.add("settings-sheet");
     const intro = document.createElement("div");
     intro.className = "hint";
     intro.textContent = state.secrets

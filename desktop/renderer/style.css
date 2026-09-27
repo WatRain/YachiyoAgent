@@ -1209,8 +1209,33 @@ body.pet-detached .panel { display: none; }
 .settings-data-note { margin-top: -4px; }
 .chat-location-pref .seg { flex: none; }
 
+.settings-sheet {
+  max-height: min(100%, calc(100dvh - 28px));
+  padding: clamp(16px, 2.5vw, var(--gap-xl));
+  gap: clamp(14px, 2vh, var(--gap-lg));
+}
+.settings-sheet .settings-panel { gap: clamp(14px, 2vh, var(--gap-lg)); }
+
 @media (max-width: 500px) {
   .settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .settings-sheet .settings-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-sheet .pref {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    padding: 11px 13px;
+  }
+  .settings-sheet .pref-main { flex: 1 1 100%; }
+  .settings-sheet .pref > .seg,
+  .settings-sheet .pref > .switch { margin-left: auto; }
+}
+
+@media (max-height: 640px) {
+  .settings-sheet { padding: 14px 16px; gap: 12px; }
+  .settings-sheet .settings-panel { gap: 12px; }
 }
 
 /* 偏好行（借 Miuix 的设置页结构：左文右控件） */

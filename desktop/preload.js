@@ -28,6 +28,12 @@ contextBridge.exposeInMainWorld("yachiyoShell", {
     });
   },
 
+  /** 角色脱离时收窄主窗口到原聊天区宽度；收回时恢复之前的窗口尺寸。 */
+  setPetDetachedLayout: (detached, width) => ipcRenderer.invoke("win:pet-detached-layout", {
+    detached: Boolean(detached),
+    width: Number(width),
+  }),
+
   /* ── 角色浮窗（把 Live2D 从右侧面板里拿出来放到桌面上） ──
      主窗口和浮窗加载的是**同一份 preload**，所以下面这组 API 两边都能用：
      主窗口用它开/收/驱动浮窗，浮窗那页用 petMove / petMenu 拖动自己和弹菜单。 */
