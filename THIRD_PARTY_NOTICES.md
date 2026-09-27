@@ -15,9 +15,9 @@
 
 - 版权：© Live2D Inc.
 - 许可：Live2D Proprietary Software License Agreement（专有许可，**不是**开源）
-- 本项目不重新分发 Core 文件：页面在运行时从 Live2D 官方 CDN
-  （`https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js`）加载，
-  所以你拿到的是 Live2D 官方发布的那份。
+- 本项目和安装包不分发 Core 文件：首次使用时由本地后端从 Live2D 官方 CDN
+  （`https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js`）下载，
+  并缓存在每用户应用数据目录，后续从本机缓存提供，所以下载的是 Live2D 官方发布的那份。
 - 如果你打算把 Core 打进安装包（离线可用），必须同时附上 Live2D 的许可条款原文
   —— 见 <https://www.live2d.com/en/sdk/license/> 与 SDK 包内的 `LICENSE.md`。
 - 使用 Cubism SDK 还需遵守 SDK Release License：个人 / 小规模企业免费，

@@ -193,7 +193,8 @@
  *   globalThis.PIXI 出现 0 次），靠全局名会踩空。
  *   ESM 里谁依赖谁写得明明白白。
  *
- * Cubism Core 仍是**普通脚本**、来自 Live2D 官方 CDN，并且必须**先于**引擎加载：
+ * Cubism Core 仍是**普通脚本**：首次使用时由本地后端从 Live2D 官方 CDN 获取，
+ * 缓存在每用户数据目录，之后由本地后端提供；并且必须**先于**引擎加载：
  *   引擎在模块求值时就会检查 Cubism 运行时在不在，不在会抛
  *   "Could not find Cubism 4 runtime..."（这个坑实测踩过）。
  *   所以引擎是用动态 import() 拉的，顺序完全由我们控制。
@@ -204,9 +205,8 @@ const say = (m) => Y.say(m);
 
 const PIXI_URL = "/static/vendor/pixi.min.mjs";
 const ENGINE_URL = "/static/vendor/pixi-live2d-engine.cubism.es.js";
-/* Cubism Core 从 Live2D 官方 CDN 取：不由我们分发，也是官方示例的做法。
-   首次加载后浏览器会缓存。 */
-const CORE_URL = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
+/* Core 首次使用时由本地后端从官方 CDN 下载并持久缓存；不随项目或安装包分发。 */
+const CORE_URL = "/live2d/cubism-core.js";
 
 const MOUTH_PARAM = "ParamMouthOpenY";
 const WORK_MEMORY_MB = 32;      // 模型 796 个参数，默认 16MB 容易不够
@@ -413,10 +413,10 @@ async function start() {
   }
 
   state.stage = "loading-core";
-  say("加载 Cubism Core（官方 CDN，需要联网）…");
+  say("加载 Cubism Core（首次联网获取，之后读取本机缓存）…");
   await loadScript(CORE_URL, 25000);
   if (typeof Live2DCubismCore === "undefined") {
-    return Y.fail("Cubism Core 没加载成功（需要联网从官方 CDN 取）");
+    return Y.fail("Cubism Core 没加载成功；首次使用需要连接官方 CDN");
   }
   say("Cubism Core " + Live2DCubismCore.Version.csmGetVersion());
 

@@ -775,6 +775,8 @@ app.whenReady().then(async () => {
       exe: packaged ? PACKAGED_BACKEND : "",
       // 打包版的数据目录 = %APPDATA%\月见八千代\data（和 core/paths.py 的约定一致）
       dataDir: packaged ? path.join(app.getPath("userData"), "data") : process.env.YACHIYO_DATA_DIR || "",
+      // Core 是运行时下载项，只放每用户缓存目录，不进入安装包或项目资源。
+      live2dCacheDir: path.join(app.getPath("userData"), "cache", "live2d"),
       modelsDir: packaged ? PACKAGED_MODELS : "",
     });
     log("后端就绪：", backend.info.url, packaged ? "（打包版 exe）" : "（开发期 python）");

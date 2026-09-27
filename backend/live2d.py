@@ -22,21 +22,30 @@ pet.html 里的依赖路径全是绝对路径（`/static/vendor/...`），模型
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from app.live2d.server import ASSETS_DIR, _safe_join, find_model, model_url
 from app.live2d.textures import cache_overlay, ensure_texture_cache
+from core.paths import data_dir
 
 log = logging.getLogger(__name__)
 
 # 8192 的原始贴图会把渲染进程撑死，先缩到这个尺寸（和 RenderConfig 的默认值一致）
 TEXTURE_MAX_SIZE = 2048
 CACHE_HEADERS = {"Cache-Control": "max-age=3600"}
+CUBISM_CORE_CDN_URL = "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"
+CUBISM_CORE_FILENAME = "live2dcubismcore.min.js"
+CUBISM_CORE_MAX_BYTES = 20 * 1024 * 1024
+_cubism_core_download_lock = asyncio.Lock()
 
 # 这几个后缀给错 MIME 会直接坏掉：
 #   .mjs 给错 → 浏览器拒绝执行 ES module（报 "Expected a JavaScript module script…"）
@@ -60,6 +69,77 @@ def _media_type(path: Path) -> str:
     if mime.startswith("text/") or mime in ("application/json", "text/javascript"):
         return mime + "; charset=utf-8"
     return mime
+
+
+def _cubism_core_cache_path() -> Path:
+    configured_dir = os.environ.get("YACHIYO_LIVE2D_CACHE_DIR")
+    cache_dir = Path(configured_dir) if configured_dir else data_dir() / "live2d" / "cache"
+    return cache_dir / CUBISM_CORE_FILENAME
+
+
+def _valid_cubism_core_cache(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+async def _ensure_cubism_core_cache() -> Path:
+    path = _cubism_core_cache_path()
+    if _valid_cubism_core_cache(path):
+        return path
+
+    async with _cubism_core_download_lock:
+        if _valid_cubism_core_cache(path):
+            return path
+
+        temp_path: Path | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{CUBISM_CORE_FILENAME}.", suffix=".tmp",
+                dir=path.parent, delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+
+            total_bytes = 0
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                async with client.stream("GET", CUBISM_CORE_CDN_URL) as response:
+                    response.raise_for_status()
+                    media_type = response.headers.get("content-type", "").split(";", 1)[0]
+                    media_type = media_type.strip().lower()
+                    supported_types = {
+                        "text/javascript", "application/javascript", "application/octet-stream",
+                    }
+                    if media_type not in supported_types:
+                        raise ValueError(f"意外的 Content-Type：{media_type or 'missing'}")
+                    content_length = response.headers.get("content-length")
+                    if content_length and int(content_length) > CUBISM_CORE_MAX_BYTES:
+                        raise ValueError("Cubism Core 响应超过大小限制")
+                    with temp_path.open("wb") as output:
+                        async for chunk in response.aiter_bytes():
+                            total_bytes += len(chunk)
+                            if total_bytes > CUBISM_CORE_MAX_BYTES:
+                                raise ValueError("Cubism Core 响应超过大小限制")
+                            output.write(chunk)
+
+            if total_bytes == 0:
+                raise ValueError("Cubism Core 响应为空")
+            os.replace(temp_path, path)
+            temp_path = None
+            log.info("Cubism Core 已从官方 CDN 下载并缓存到本机")
+            return path
+        except Exception as exc:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            log.warning("Cubism Core 首次下载失败：%s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="首次加载 Live2D 需要连接官方 CDN；下载 Cubism Core 失败，请检查网络后重试。",
+            ) from exc
 
 
 @dataclass(frozen=True)
@@ -114,6 +194,12 @@ def mount(app: FastAPI, *, assets_dir: Path = ASSETS_DIR,
         # 页面不缓存：改完刷新就生效，调试期省事
         return FileResponse(assets / "pet.html", media_type="text/html; charset=utf-8",
                             headers={"Cache-Control": "no-store"})
+
+    @app.get("/live2d/cubism-core.js", include_in_schema=False)
+    async def cubism_core_file() -> FileResponse:
+        core = await _ensure_cubism_core_cache()
+        return FileResponse(core, media_type="text/javascript; charset=utf-8",
+                            headers=CACHE_HEADERS)
 
     @app.get("/static/{rel:path}", include_in_schema=False)
     def static_file(rel: str) -> FileResponse:  # noqa: ANN202

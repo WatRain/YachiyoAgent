@@ -14,8 +14,8 @@
 
 ## 不在这里的依赖
 
-**Cubism Core**（`live2dcubismcore.min.js`）由页面在运行时从 Live2D 官方 CDN 加载，
-不由我们分发：
+**Cubism Core**（`live2dcubismcore.min.js`）首次使用时由本地后端从 Live2D 官方 CDN 下载，
+并缓存在每用户应用数据目录；后续从缓存提供，不随项目或安装包分发：
 
     https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js
 

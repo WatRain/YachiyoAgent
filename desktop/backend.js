@@ -59,13 +59,14 @@ async function waitForHealth(info, timeoutMs = 15000) {
 
 /**
  * 起后端，等它就绪。
- * @param {{logDir?:string, dataDir?:string, logLevel?:string, timeoutMs?:number,
- *          exe?:string, modelsDir?:string}} options
+ * @param {{logDir?:string, dataDir?:string, live2dCacheDir?:string, logLevel?:string,
+ *          timeoutMs?:number, exe?:string, modelsDir?:string}} options
  *   exe       —— 打包版后端的可执行文件（给了就用它，不再找 python）
  *   modelsDir —— 打包版内置模型的目录（转成 YACHIYO_MODEL_DIR 交给后端）
+ *   live2dCacheDir —— Cubism Core 的 per-user 缓存目录（不放进安装包）
  * @returns {{child, info:{port,token,url,api}, logFile, stop():void}}
- */async function startBackend({ logDir, dataDir, logLevel = "INFO", timeoutMs = 90000,
-                              exe = "", modelsDir = "" } = {}) {
+ */async function startBackend({ logDir, dataDir, live2dCacheDir, logLevel = "INFO",
+                              timeoutMs = 90000, exe = "", modelsDir = "" } = {}) {
   fs.mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, "backend.log");
   // 这次启动的分隔线：不然上次的 READY 行会被误读成这次的
@@ -77,6 +78,7 @@ async function waitForHealth(info, timeoutMs = 15000) {
     YACHIYO_LOG_LEVEL: logLevel,
   };
   if (dataDir) env.YACHIYO_DATA_DIR = dataDir;
+  if (live2dCacheDir) env.YACHIYO_LIVE2D_CACHE_DIR = live2dCacheDir;
   if (modelsDir && fs.existsSync(modelsDir)) env.YACHIYO_MODEL_DIR = modelsDir;
   // PYTHONPATH 只有开发期需要（打包版的后端自己带了全套模块）
   if (!exe) env.PYTHONPATH = PROJECT_ROOT;

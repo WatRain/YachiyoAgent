@@ -2212,7 +2212,7 @@ function openSetup() {
               <ul>
                 <li><b>密钥存在哪</b>：API Key 只写进这台电脑的系统凭据管理器，不写进配置文件、不写进日志，程序里不留明文。在设置里删掉 provider 时，密钥一并删除。</li>
                 <li><b>数据存在哪</b>：配置、对话记录、记忆都留在这台电脑的数据目录里（装好后是 <code>%APPDATA%\\YachiyoAgent\\data</code>）。没有账号，也没有我们的服务器 —— 这个程序不会连任何由我们控制的地址。</li>
-                <li><b>什么会发出去</b>：一是你输入的内容，会直接发给你自己填的那个模型服务端点（设置里的「接口地址」），发给谁、发什么由你决定，请一并看那家的隐私政策；二是角色渲染引擎 Live2D Cubism Core，启动时从 Live2D 官方 CDN（<code>cubism.live2d.com</code>）取一次。</li>
+                <li><b>什么会发出去</b>：一是你输入的内容，会直接发给你自己填的那个模型服务端点（设置里的「接口地址」），发给谁、发什么由你决定，请一并看那家的隐私政策；二是角色渲染引擎 Live2D Cubism Core，首次使用时从 Live2D 官方 CDN（<code>cubism.live2d.com</code>）下载并缓存在本机应用数据目录，之后从本机缓存加载。</li>
                 <li><b>不采集什么</b>：没有遥测、没有使用统计、没有崩溃上报、没有广告标识符。</li>
                 <li><b>卸载</b>：卸载程序不会替你删数据目录和凭据管理器里的密钥。想彻底清干净，就自己删掉上面那个目录，再到「凭据管理器 → Windows 凭据」里删掉 <code>YachiyoAgent/</code> 开头的条目。</li>
               </ul>
@@ -2238,7 +2238,7 @@ function openSetup() {
                 <li><span class="n">tiktoken</span><span class="l">MIT</span></li>
                 <li><span class="n">python-dotenv</span><span class="l">BSD-3</span></li>
               </ul>
-              <p>Live2D Cubism Core © Live2D Inc.，按 Live2D Proprietary Software License Agreement 使用（专有许可，<b>不是</b>开源）。它不在安装包里，页面运行时从 Live2D 官方 CDN 加载。把 Live2D 用作 AI / 聊天机器人的界面，还需要遵守 SDK Release License。</p>
+              <p>Live2D Cubism Core © Live2D Inc.，按 Live2D Proprietary Software License Agreement 使用（专有许可，<b>不是</b>开源）。它不在项目或安装包里，首次使用时从 Live2D 官方 CDN 下载并缓存在本机应用数据目录，之后读取缓存。把 Live2D 用作 AI / 聊天机器人的界面，还需要遵守 SDK Release License。</p>
               <p>完整的组件清单、版本号和许可全文见安装目录下的 <code>THIRD_PARTY_NOTICES.md</code>。</p>
             </section>
             <section class="legal-sec">
