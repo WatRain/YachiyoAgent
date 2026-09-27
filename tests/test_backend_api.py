@@ -349,6 +349,18 @@ def test_config_only_accepts_editable_fields(client):
     assert client.post("/api/config", json={"temperature": "很热"}).status_code == 400
 
 
+def test_config_temperature_updates_existing_chat(client):
+    chat = FakeChat()
+    chat.temperature = 0.8
+    client.state_obj.chat = chat
+
+    response = client.post("/api/config", json={"temperature": 0.35})
+
+    assert response.status_code == 200
+    assert response.json()["temperature"] == 0.35
+    assert chat.temperature == 0.35
+
+
 def test_consent_is_recorded_through_the_api(client):
     """许可页勾完同意，前端走的就是这个接口：能落盘、能读回、乱写要拦。"""
     at = "2026-09-25T12:30:00+08:00"

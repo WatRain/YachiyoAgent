@@ -363,6 +363,8 @@ class Chat:
             extra["tools"] = self._tool_schemas
             extra["tool_choice"] = "auto"   # 让模型自己决定用不用（兼容性最好）
 
+        # 留下实际送给模型的采样参数，便于排查设置页变更是否进入请求。
+        log.info("模型请求参数：temperature=%s", self.temperature)
         stream = await acompletion(
             messages=self._prompt_messages(),   # 只带最近几个来回，见上面那段实测
             temperature=self.temperature,

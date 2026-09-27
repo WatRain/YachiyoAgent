@@ -1903,8 +1903,18 @@ function openSettings() {
     const range = temp.querySelector("input");
     range.oninput = () => { temp.querySelector("#temp-value").textContent = range.value; };
     range.onchange = async () => {
-      await api("/api/config", { method: "POST", body: { temperature: Number(range.value) } });
-      state.cfg.temperature = Number(range.value);
+      const previous = Number(state.cfg?.temperature ?? 0.8);
+      const requested = Number(range.value);
+      try {
+        const saved = await api("/api/config", { method: "POST", body: { temperature: requested } });
+        state.cfg.temperature = Number(saved?.temperature ?? requested);
+        range.value = String(state.cfg.temperature);
+        temp.querySelector("#temp-value").textContent = range.value;
+      } catch (err) {
+        range.value = String(previous);
+        temp.querySelector("#temp-value").textContent = `${previous}（保存失败）`;
+        setStatus(`温度设置未能保存：${err.message}`, true);
+      }
     };
     conversationPanel.appendChild(temp);
 

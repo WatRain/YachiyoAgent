@@ -61,6 +61,19 @@ def _chat(**kwargs):
     return Chat({"model": "openai/test", "api_key": "x"}, use_memory=False, **kwargs)
 
 
+async def test_temperature_changes_are_forwarded_to_model(monkeypatch):
+    seen = _fake(monkeypatch, [_chunk("第一次")], [_chunk("第二次")])
+    chat = _chat(temperature=0.8)
+    chat.add_message("第一句")
+
+    [piece async for piece in chat.reply_stream()]
+    chat.temperature = 0.2
+    chat.add_message("第二句")
+    [piece async for piece in chat.reply_stream()]
+
+    assert [request["temperature"] for request in seen] == [0.8, 0.2]
+
+
 SCHEMA = {"type": "function", "function": {"name": "demo", "parameters": {}}}
 
 

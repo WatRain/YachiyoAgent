@@ -355,6 +355,9 @@ def create_app(*, token: str = "", state: BackendState | None = None,
             st.cfg = AppConfig.model_validate({**st.cfg.model_dump(), **changes})
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=f"配置值不合法：{exc.error_count()} 处") from exc
+        # Chat 对象会长期复用以保留上下文；温度在创建时复制进实例，改配置时要同步更新。
+        if "temperature" in changes and st.chat is not None:
+            st.chat.temperature = st.cfg.temperature
         await asyncio.to_thread(st.save_config)
         return st.cfg.model_dump()
 
