@@ -1,6 +1,6 @@
 {
   "name": "yachiyo-agent",
-  "productName": "月见八千代",
+  "productName": "YachiyoAgent",
   "version": "1.0.0",
   "description": "本地的 AI 伙伴：自己填模型服务，密钥只存在你自己的电脑上",
   "main": "main.js",
@@ -23,7 +23,8 @@
   },
   "build": {
     "appId": "com.watrain.yachiyoagent",
-    "productName": "月见八千代",
+    "productName": "YachiyoAgent",
+    "executableName": "YachiyoAgent",
     "directories": {
       "output": "release"
     },
@@ -54,7 +55,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "月见八千代",
+      "shortcutName": "YachiyoAgent",
       "deleteAppDataOnUninstall": false
     }
   }

@@ -18,11 +18,55 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { startBackend } = require("./backend.js");
 
+app.setName("YachiyoAgent");
+
 const PROJECT_ROOT = path.resolve(__dirname, "..");
+const LEGACY_USER_DATA_DIR = path.join(app.getPath("appData"), "月见八千代");
+
+function copyMissingEntries(source, destination) {
+  fs.mkdirSync(destination, { recursive: true });
+  for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+    const sourcePath = path.join(source, entry.name);
+    const destinationPath = path.join(destination, entry.name);
+    if (!fs.existsSync(destinationPath)) {
+      if (entry.isDirectory()) {
+        fs.cpSync(sourcePath, destinationPath, { recursive: true, force: false, errorOnExist: true });
+      } else {
+        fs.copyFileSync(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
+      }
+    } else if (entry.isDirectory() && fs.statSync(destinationPath).isDirectory()) {
+      copyMissingEntries(sourcePath, destinationPath);
+    }
+  }
+}
+
+let userDataMigration = "";
+let userDataMigrationError = null;
+const currentUserDataDir = app.getPath("userData");
+if (
+  process.platform === "win32" &&
+  path.resolve(LEGACY_USER_DATA_DIR).toLowerCase() !== path.resolve(currentUserDataDir).toLowerCase() &&
+  fs.existsSync(LEGACY_USER_DATA_DIR)
+) {
+  try {
+    if (fs.existsSync(currentUserDataDir)) {
+      copyMissingEntries(LEGACY_USER_DATA_DIR, currentUserDataDir);
+      userDataMigration = "合并旧版用户数据";
+    } else {
+      fs.renameSync(LEGACY_USER_DATA_DIR, currentUserDataDir);
+      userDataMigration = "迁移旧版用户数据";
+    }
+  } catch (error) {
+    userDataMigrationError = error;
+    app.setPath("userData", LEGACY_USER_DATA_DIR);
+  }
+}
+const USER_DATA_DIR = app.getPath("userData");
+
 // 打包后 __dirname 在 app.asar 里面（只读）—— 往那儿建目录会直接抛错、应用起不来。
-// 所以打包版把日志写进 %APPDATA%\月见八千代\logs。
+// 所以打包版把日志写进 %APPDATA%\YachiyoAgent\logs。
 const LOG_DIR = app.isPackaged
-  ? path.join(app.getPath("userData"), "logs")
+  ? path.join(USER_DATA_DIR, "logs")
   : path.join(__dirname, ".logs");
 const LOG_FILE = path.join(LOG_DIR, "app.log");
 
@@ -73,6 +117,9 @@ function log(...parts) {
     /* 盘写不进去也不能拖垮应用 */
   }
 }
+
+if (userDataMigration) log(`${userDataMigration}到`, USER_DATA_DIR);
+if (userDataMigrationError) log("用户数据迁移失败，继续使用旧目录：", userDataMigrationError);
 
 // stdout/stderr 被外部接管后可能已经被关掉（EPIPE），吞掉错误别让它变成崩溃
 process.stdout.on("error", () => {});
@@ -773,10 +820,10 @@ app.whenReady().then(async () => {
       logDir: LOG_DIR,
       logLevel: process.env.YACHIYO_LOG_LEVEL || "INFO",
       exe: packaged ? PACKAGED_BACKEND : "",
-      // 打包版的数据目录 = %APPDATA%\月见八千代\data（和 core/paths.py 的约定一致）
-      dataDir: packaged ? path.join(app.getPath("userData"), "data") : process.env.YACHIYO_DATA_DIR || "",
+      // 打包版的数据目录 = %APPDATA%\YachiyoAgent\data（和 core/paths.py 的约定一致）
+      dataDir: packaged ? path.join(USER_DATA_DIR, "data") : process.env.YACHIYO_DATA_DIR || "",
       // Core 是运行时下载项，只放每用户缓存目录，不进入安装包或项目资源。
-      live2dCacheDir: path.join(app.getPath("userData"), "cache", "live2d"),
+      live2dCacheDir: path.join(USER_DATA_DIR, "cache", "live2d"),
       modelsDir: packaged ? PACKAGED_MODELS : "",
     });
     log("后端就绪：", backend.info.url, packaged ? "（打包版 exe）" : "（开发期 python）");
