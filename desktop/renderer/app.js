@@ -2221,7 +2221,7 @@ function openSetup() {
     sheet.classList.add("setup");
     sheet.innerHTML = `
       <div class="setup-top">
-        <div class="setup-brand"><span class="setup-brand-text">YachiyoAgent</span></div>
+        <div class="setup-brand"><span class="setup-brand-text">八千代Agent</span></div>
         <div class="setup-dots" id="setup-dots" aria-hidden="true">
           ${SETUP_STEPS.map(() => `<span class="setup-dot"></span>`).join("")}
         </div>
@@ -2230,7 +2230,7 @@ function openSetup() {
         <section class="setup-pane" data-step="0">
           <h2 class="setup-hero">
             <span class="setup-hero-eyebrow">欢迎来到</span>
-            <span class="setup-hero-word">YachiyoAgent</span>
+            <span class="setup-hero-word">八千代Agent</span>
           </h2>
           <div class="hint setup-hero-note">
             先花一分钟接上你自己的模型服务。<br />
