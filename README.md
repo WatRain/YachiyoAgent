@@ -1,144 +1,143 @@
-# 月见八千代 Agent
+<p align="center">
+  <img src="./desktop/assets/icon.png" width="160" alt="月见八千代应用图标">
+</p>
+<p align="center">
+  <sub>项目图标由 <strong><em>gpt-image-2.5-flare</em></strong> 生成</sub>
+</p>
 
-这是一位住在桌面上的 AI 伙伴。
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows-0078D4?logo=windows&logoColor=white" alt="Windows">
+  <img src="https://img.shields.io/badge/Live2D-角色渲染-26C6DA" alt="Live2D">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-44A833" alt="MIT License"></a>
+</p>
 
-月见八千代 Agent 把大语言模型对话和 Live2D 角色放在同一个 Windows 桌面应用里。她可以流式回复，也能根据对话回应表情与动作。你可以在主窗口聊天，也可以把角色放到桌面浮窗里，再选择继续使用主窗口，或在她身旁的小窗中聊天。
+<h1 align="center">月见八千代 Agent</h1>
+
+<p align="center">一位住在桌面上的 AI 伙伴</p>
+
+<p align="center">
+  <a href="README_FULL.md">完整 README</a> ·
+  <!-- <a href="LICENSE">项目 LICENSE</a> · -->
+  <a href="THIRD_PARTY_NOTICES.md">第三方声明</a>
+</p>
+
+月见八千代 Agent 把大语言模型对话与 Live2D 角色放在同一个 Windows 桌面应用里。她可以流式回复，也能根据对话回应表情与动作。你可以在主窗口聊天，也可以把角色放到桌面浮窗里，在她身旁的小窗中聊天。
 
 模型服务和 API Key 由你自己选择并配置。应用不内置模型，也不提供模型服务。
 
-## 她能做什么
+本项目的工具调用采用 ReAct 风格的 Agent 循环，基于 LiteLLM 原生 function calling 实现：模型输出 Thought 文本并返回结构化 `tool_calls`，程序执行工具后，把结果作为 `tool` 消息追加回上下文，一次模型请求中可以同时提出多个 `tool_calls` 循环，总轮数不会超过4轮。直到模型不再请求工具后，返回最终结果。
 
-- **和你聊天：** 连接 DeepSeek、OpenAI、Anthropic、Gemini、OpenRouter、本地 Ollama，或填写兼容的自定义端点。回复以流式方式逐步呈现。
-- **陪在桌面上：** 在主窗口中显示 Live2D 角色，也可以把角色脱离为桌面浮窗。浮窗模式下，聊天可以留在主窗口，也可以放到角色旁的小窗。
-- **按习惯调整：** 外观可以跟随系统，也可以固定为浅色或深色；角色窗口、聊天位置和工具档位都可以在设置里调整。
-- **回应对话：** 模型可以按语气触发表情和少量预设动作。角色模型随项目提供，来自[雪熊企划](https://space.bilibili.com/3546783265327964)。
-- **使用工具：** 默认可以搜索网页、读取本地资料、查看时间和剪贴板、截图、管理长期记忆，以及控制角色表情动作。写文件、运行命令等操作需要切换到「完全」档位，并逐次确认。
-- **记住重要信息：** 长期记忆以可读的 JSON 文件保存在本机。八千代可以通过记忆工具查询和修改，你也可以直接打开文件查看。
+建议使用[DeepSeek](https://platform.deepseek.com/)所提供的 API 服务。
 
-目前聊天记录是一个持续会话；应用重新打开后会接着显示这段记录。项目还没有多会话列表，也不会自动把旧聊天压缩成摘要。
+## 界面预览
 
-## 技术栈与开源项目
+主界面：
 
-| 部分 | 使用的技术 | 用途 |
-| --- | --- | --- |
-| 桌面应用 | [Electron](https://www.electronjs.org/) 44.4.5、[Node.js](https://nodejs.org/)、HTML、CSS、原生 JavaScript | Electron 主进程基于 Node.js 管理窗口、子进程和系统接口；渲染进程负责界面。 |
-| 本机后端 | [Python](https://www.python.org/)、[FastAPI](https://fastapi.tiangolo.com/)、[Uvicorn](https://www.uvicorn.org/) | 提供本地 HTTP 与 WebSocket 接口，处理配置、聊天、记忆和工具调用。 |
-| 模型接入 | [LiteLLM](https://github.com/BerriAI/litellm) | 把不同服务商的模型请求交给统一的调用层处理。 |
-| 配置、联网与桌面工具 | [Pydantic](https://docs.pydantic.dev/)、[HTTPX](https://www.python-httpx.org/)、[DDGS](https://github.com/deedy5/ddgs)、[markdownify](https://github.com/matthewwithanm/python-markdownify)、[Pillow](https://python-pillow.org/)、[Pyperclip](https://github.com/asweigart/pyperclip)、[tiktoken](https://github.com/openai/tiktoken) | 分别用于配置校验、网页请求与整理、联网搜索、图像和剪贴板处理，以及 LiteLLM 使用的 Tokenizer 数据。 |
-| 对话循环 | 项目自己的 Python Agent Loop | 流式接收模型回复；模型提出工具调用时执行工具、把结果交回模型，再继续回复。 |
-| Live2D | [PixiJS](https://pixijs.com/) 8.13.1、[untitled-pixi-live2d-engine](https://www.npmjs.com/package/untitled-pixi-live2d-engine) 1.4.0 | 在 Electron 页面中绘制角色并加载模型。 |
-| 本机数据 | JSON、Windows 凭据管理器 | 配置、会话与长期记忆保存在本机；API Key 可交由 Windows 凭据管理器保存。 |
-| Windows 打包 | [PyInstaller](https://pyinstaller.org/)、[electron-builder](https://www.electron.build/) | 分别打包 Python 后端和 Electron 安装程序。 |
+![月见八千代主界面](readme-assets/main-light.png)
 
-Electron 主进程启动一个只监听本机回环地址的 FastAPI 服务，并通过 preload 暴露受限的窗口控制接口。后端启动时选择可用端口，并生成本次运行使用的访问令牌；界面通过本地 HTTP 和 WebSocket 与它通信。模型调用从后端发往你配置的服务端点，渲染进程不直接持有 API Key。
+外观与角色设置：
 
-## 模型工具
+![外观与角色设置](readme-assets/settings-appearance.png)
 
-在设置的「对话与工具」中，可以选择三个档位：
+对话与工具设置：
 
-- **关闭：** 不向模型提供工具，只进行普通对话。
-- **安全（默认）：** 提供以下工具，不包含文件写入、打开路径或执行命令。
-- **完全：** 在安全档位的基础上，增加写文件、改文件、打开路径和执行命令。
+![对话与工具设置](readme-assets/settings-tools.png)
 
-安全档位中的工具：
+## 核心能力
 
-| 工具 | 能做什么 |
-| --- | --- |
-| `get_time` | 查看本机时间，也可以指定时区。 |
-| `web_search`、`web_fetch` | 搜索网页并读取公开网页正文。搜索使用免密钥的 DDGS；读取网页只接受 HTTP/HTTPS，并会拦截解析到本机或内网的地址。 |
-| `read_file`、`list_dir` | 读取 UTF-8 文本文件、列出目录。读取文件单次最多 200 KB，目录最多显示 200 项。 |
-| `memory_search`、`memory_add`、`memory_forget` | 查询、添加或删除长期记忆。 |
-| `screenshot` | 截取整个屏幕并保存到本机。 |
-| `clipboard_read`、`clipboard_write` | 读取或写入剪贴板文字。 |
-| `control_live2d` | 选择预设表情或动作，让角色配合回复。 |
+- **连接模型：** 支持 DeepSeek、OpenAI、Anthropic、Gemini、OpenRouter、本地 Ollama 或自定义端点。
+- **陪在桌面上：** 支持主窗口、Live2D 桌面浮窗和角色旁聊天小窗。
+- **按习惯调整：** 支持浅色、深色和跟随系统，并可让角色配合回复做预设表情与动作。
+- **使用工具：** 提供网页搜索、网页读取、文件读取、时间、剪贴板、截图和长期记忆工具。
+- **确认后操作：** 切换到「完全」工具档位后，可在确认弹窗允许下写文件、改文件、打开路径和执行命令。
+- **本地保存：** 配置、会话和长期记忆保存在本机；API Key 可保存到 Windows 凭据管理器。
 
-「完全」档位额外提供：
+聊天记录是一个持续会话，应用重启后会恢复。当前没有多会话列表，也不会自动生成旧对话摘要。
 
-| 工具 | 能做什么 |
-| --- | --- |
-| `write_file` | 新建文件或覆盖文件。 |
-| `edit_file` | 将文件中唯一匹配的一段文字替换为新内容。 |
-| `open_path` | 用系统默认程序打开文件或文件夹。 |
-| `run_command` | 在本机执行命令；Windows 下使用 PowerShell，默认最多运行 60 秒，最高 300 秒。 |
+## 技术栈
 
-这些操作会在执行前显示确认弹窗，只有你同意后才会继续。当前实现采用“无法确认就拒绝”的策略：确认界面不可用，或关闭「动手前先问我」时，高权限工具不会执行，也不会跳过确认直接动手。文件工具可以访问当前 Windows 用户有权限访问的路径，不局限于项目目录；命令工具会在本机运行。模型是否调用某个工具仍由当前模型根据工具说明和对话内容决定；工具可用不代表每轮都会调用。
+[![Electron](https://img.shields.io/badge/Electron-44.4.5-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-运行时-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Python](https://img.shields.io/badge/Python-后端-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-接口-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![JavaScript](https://img.shields.io/badge/JavaScript-界面-F7DF1E?logo=javascript&logoColor=black)](https://developer.mozilla.org/docs/Web/JavaScript)
+[![PixiJS](https://img.shields.io/badge/PixiJS-8.13.1-EF?logo=pixijs&logoColor=white)](https://pixijs.com/)
 
-读取文件、网页和工具返回内容都有大小上限，例如单次文件读取最多 200 KB、网页正文默认最多 8,000 字，工具返回给模型的内容最多 20,000 字符。工具执行结果会作为对话上下文交回模型服务，以便它继续组织回复。联网搜索会发送搜索词，网页读取会请求对应的网站；请根据你使用的服务和工具内容判断适合发送哪些信息。
+- **桌面端：** Electron 44、Node.js、HTML、CSS 和原生 JavaScript。
+- **本机后端：** Python、FastAPI、Uvicorn，通过 HTTP 与 WebSocket 和界面通信。
+- **模型接入：** LiteLLM，统一连接不同模型服务。
+- **角色渲染：** PixiJS 8.13.1 与 untitled-pixi-live2d-engine 1.4.0。
+- **数据与打包：** JSON、Windows 凭据管理器、PyInstaller、electron-builder。
 
-## 对话上下文与长期记忆
+## 快速开始
 
-- 每次请求都会加载项目中的 [prompt.md](prompt.md) 作为角色设定，并把长期记忆附加到系统消息中。
-- 会话记录完整保存在本机的 `conversation.json`，其中包括用户消息、角色回复和工具调用结果。应用重启后会恢复这份记录。
-- 发给模型的会话历史默认只保留最近 **12 个用户回合**，并从用户消息边界开始裁剪，避免把工具调用和工具结果从中间拆开。更早的记录仍留在本机文件里，但不会继续随每次请求发给模型。当前实际按回合数裁剪，没有按 Token 数裁剪。
-- 每次用户发言最多进行 4 轮模型请求；最后一轮不再附带工具列表，让模型收束为最终回复。
-- 长期记忆保存在 `memories.json`。八千代可以通过 `memory_search`、`memory_add` 和 `memory_forget` 管理记忆；主界面会显示记忆条数，但没有单独的记忆编辑页，需要查看或手动修改时可以直接打开该 JSON 文件。当前不会在每轮对话后自动运行记忆抽取或生成旧对话摘要。
+需要 Python、Node.js 和 npm：
 
-## 数据与隐私
-
-打包版数据默认放在：
-
-```text
-%APPDATA%\月见八千代\data\
-```
-
-开发版默认放在项目根目录的 `.devdata/`。可以通过环境变量 `YACHIYO_DATA_DIR` 指定其他数据目录。
-
-| 文件或位置 | 内容 |
-| --- | --- |
-| `config.json` | Provider、外观、工具等配置，不保存 API Key。 |
-| `conversation.json` | 持续会话，包括工具调用与工具结果。 |
-| `memories.json` | 可读的长期记忆。 |
-| `reminders.json` | 本地提醒记录；当前没有后台定时通知，也没有提供给模型使用的提醒工具。 |
-| `logs/app.log` | 后端日志，位于数据目录的 `logs/` 子目录；日志会对密钥类内容做脱敏处理。Electron 启动日志和后端进程输出另存在开发版的 `desktop/.logs/` 或安装版的应用数据目录 `logs/` 中。 |
-| Windows 凭据管理器 | 选择保存时，API Key 以 `YachiyoAgent/apikey:<provider>` 为名称保存；否则只在本次运行期间留在内存中。 |
-
-会话、记忆和配置是普通本地 JSON 文件，不会加密。与模型对话时，消息和工具结果会发送给你配置的模型服务，由该服务按它自己的隐私规则处理。应用不经过自有的中转服务器。Live2D 的 PixiJS 和渲染引擎已随项目提供；**Live2D Cubism Core** 是独立的专有运行库，首次使用时从 Live2D 官方 CDN 下载并缓存在用户数据目录，后续启动会使用缓存。删除这份缓存后，需要再次联网下载。
-
-## 在 Windows 上运行开发版
-
-需要安装 Python、Node.js 和 npm。PowerShell 中执行：
-
-```powershell
-# 在项目根目录
+~~~~powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# 安装 Electron 依赖并启动应用
+.\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt
 cd desktop
 npm install
 npm start
-```
+~~~~
 
-`npm start` 会启动 Electron；开发版后端优先使用项目根目录的 `.venv\Scripts\python.exe`，找不到时再使用系统的 `python`。首次打开应用时，按引导选择模型服务，填写模型 ID 和 API Key，并测试连接。
+首次打开应用时，按引导选择模型服务，填写模型 ID 和 API Key，并测试连接。开发版后端优先使用项目根目录的 .venv\\Scripts\\python.exe。
+<!--
+## 相关文档
 
-## 打包
+- [查看完整 README](README_FULL.md)：工具清单、权限档位、上下文裁剪、记忆处理、数据目录、打包和项目结构。
+- [第三方组件与许可说明](THIRD_PARTY_NOTICES.md)：第三方代码、Live2D 模型、字体和许可证。
+- [LICENSE](LICENSE)：本项目自有代码的 MIT License。 -->
 
-打包需要额外安装 PyInstaller，并且构建 Live2D 与 Tokenizer 缓存时需要联网：
 
-```powershell
-# 在项目根目录安装打包工具
-.\.venv\Scripts\python.exe -m pip install pyinstaller
+## 写在最后
 
-# 在 desktop 目录运行
-cd desktop
-npm run pack   # 生成 release\win-unpacked，适合本机试运行
-npm run dist   # 生成 Windows NSIS 安装程序
-```
+非常感谢你的使用，这算是我真正意义上**完整**开发的第一个项目。在~~看了五集~~《超时空辉夜姬》之后，我便萌生了制作一个"八千代"智能体的想法~~（就像彩叶那样）~~。然而那时的我正身处高三，鲜有机会使用电脑，于是这一拖，便拖到了现在。
 
-构建脚本会先把 Python 后端打包，再由 electron-builder 生成桌面程序。输出位于 `desktop/release/`。
 
-## 项目结构
+这个项目是我在系统了解了 AI Agent 各方面知识后才正式着手的。后端由 Python 实现，前端界面与部分后端在前期由 DeepSeek V4.1 Flash 编写，中后期则交由 GPT6 完成。后端中的 Agent Loop 以及 Chat 部分由我手动编写完成后喂给大肥鱼与 GPT6 完成后续开发~~（不过在后续的 vibe coding 过程中，已经被大肥鱼和 GPT 大幅重构了）~~。
 
-```text
-├─ prompt.md                  角色设定与工具使用说明
-├─ backend/                   FastAPI 服务、聊天 WebSocket、Live2D 资源服务
-├─ core/                      对话循环、工具、Provider、记忆、配置与凭据
-├─ desktop/                   Electron 主进程、preload 与界面
-│  └─ renderer/               主界面、角色旁聊天窗、样式与关于页
-├─ app/assets/live2d/         内置 Live2D 模型和渲染依赖
-├─ packaging/                 PyInstaller 后端打包配置与构建脚本
-├─ requirements.txt           Python 依赖范围
-└─ THIRD_PARTY_NOTICES.md     第三方组件、模型与许可证说明
-```
+鄙人目前是大一新生，本项目中有大量 AI 生成的代码，我仍在努力学习 coding 中，恳请各位老资历多多包涵~~（不要压力我口牙）~~。当然，如果遇到了 Bug，或者你有任何好的想法与建议，欢迎提交 Issue / PR 😇。
 
-应用代码采用 MIT 许可，详见 [LICENSE](LICENSE)。模型与第三方组件有各自的来源和许可，请同时阅读 [第三方组件与许可说明](THIRD_PARTY_NOTICES.md)。
+本项目未来大概或许可能会进行重构，前端会逐步脱离 Electron 框架。当然，还会有更多功能陆续加入。
+
+你可能会在本项目中看到不少神秘的测试代码，包括但不限于名为 `fuck`、`kskbl` 等的变量。当然，正式编译时我不会把它们包含进去；这些是我早期 Commit 时不小心提交的。~~想了想，还是决定不删了~~。
+
+欢迎拉取本项目的源码用于二次开发，你只需要简单替换仓库中的模型文件以及[prompt.md](prompt.md)后，即可获得一个属于你自己的 AI Agent~~（电子女友）~~。
+
+感谢你耐心阅读到这里。如果你对 AI 感兴趣，或者想参与构建本项目，欢迎通过我的邮箱联系我：*waterrainbow@foxmail.com*
+
+---
+
+另外，
+
+我认为，人往往是需要陪伴的，尤其是在如今生活节奏普遍加快的情况下。
+
+我至今仍记得，当初配置完 OpenClaw 后，向她发出第一条消息并收到回应时，内心那份难以抑制的激动。
+
+不论是从早期的 "AI" —— [ELIZA](https://zh.wikipedia.org/wiki/ELIZA)，抑或是如今的各种聊天机器人，都可以证实——人的确是会对 "机器" 产生感情的。
+
+所以我制作了这个 Agent ，她不仅可以陪伴你，也可以在~~一定程度~~上帮助你干活。当然，我也希望她可以给你带来欢乐。
+
+而在我高中毕业之后，随着我对当前 AI 原理的理解逐渐深入，说实话我有些许失望——它和我想象中的 AI 并不完全一样。
+
+虽然当前 AI 的核心仍建立在数学与统计之上，但我始终相信，未来终有一天，我们会拥有属于自己的"八千代"。
+
+在文末，引用一句我 [Hibays](https://github.com/hibays) 师兄对我说过的话：
+
+***"Only I can tell you that AGI is something.***
+
+***Something we are all searching for."***
+
+我们仍在前进，未来由你我共同构建。
+
+AGI 时代，终会到来。
+
+<details>
+<summary><b>免责声明与素材说明</b></summary>
+
+> - **角色原作与版权：** 月见八千代（日文名：月見ヤチヨ）是官方作品[《超时空辉夜姬！》](https://www.cho-kaguyahime.com/)中的角色。作品官网列出月见ヤチヨ的角色资料，官网页脚标注作品版权为 `©コロリド・ツインエンジンパートナーズ`。本项目不是该作品的官方应用，属于该作品的同人二创。
+> - **模型素材：** 仓库中的 Live2D 模型来自[雪熊企划](https://space.bilibili.com/3546783265327964)发布的[《月见八千代〈超时空辉夜姬〉同人 Live2D 模型展示》](https://www.bilibili.com/video/BV1CzZ6BcEKN/)。**请勿将仓库中的模型文件用于其他用途。**
+> - **Live2D 运行库：** `Live2D Cubism Core` 是 Live2D 的专有运行库，不属于本项目的 MIT License，也不是开源依赖。应用首次使用时从 Live2D 官方 CDN 下载并缓存在本机，后续从缓存加载；正式发布使用 Cubism SDK 的内容还需查看[SDK 发布许可说明](https://www.live2d.com/zh-CHS/sdk/license/)。
+> - **责任声明：** 请对 AI 生成的内容及您的使用行为负责，不要肆意传播不良信息。**请谨慎使用有关文件操作的相关 tools，作者不对 LLM 误操作文件所造成的损失负责。**
+</details>

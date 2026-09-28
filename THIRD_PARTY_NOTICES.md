@@ -2,22 +2,29 @@
 
 月见八千代 Agent 的自有代码按仓库根目录 [LICENSE](LICENSE) 中的 MIT License 授权。这个许可不覆盖第三方代码、Live2D 模型或其他素材；它们仍按各自的许可和权利人要求使用。
 
+本项目为**完全开源免费**的个人项目，我**不会**从其中获得任何盈利。如有侵权，请通过我的[Github 主页](https://github.com/WatRain)联系我，我将积极配合处理。
+
 下表列出项目当前使用或随程序分发的主要组件。Python 依赖在 [requirements.txt](requirements.txt) 中使用版本范围而非完整锁定文件，因此具体构建中解析到的版本可能不同。
 
-## Live2D 与模型
+## Live2D、角色原作与模型素材
+
+### 角色原作
+
+- 月见八千代（日文名：月見ヤチヨ）是官方作品[《超时空辉夜姬！》](https://www.cho-kaguyahime.com/)中的角色。官方页面列出她是虚拟空间「ツクヨミ」的管理人兼顶级直播主；作品官网页脚标注版权为 `©コロリド・ツインエンジンパートナーズ`。
+- 本项目是独立的非官方应用（二创作品）。仓库根目录的 MIT License 只覆盖本项目自有代码，不覆盖《超时空辉夜姬！》的角色、名称、设定、音乐、画面或其他原作素材。
 
 ### Live2D Cubism Core
 
 - 性质：Live2D 的专有运行库，不是开源软件。
 - 本项目不在仓库或安装包中分发 Core。首次使用 Live2D 时，程序从 Live2D 官方 CDN 下载，并缓存到当前用户的应用数据目录；之后从本机缓存加载。删除缓存后需要再次联网获取。
 - 官方文件地址：<https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js>
-- 请遵守 [Live2D Cubism SDK 许可条款](https://www.live2d.com/en/sdk/license/)及其适用的发布规则。
+- Cubism Core 是 Cubism SDK 中负责模型顶点等计算的原生运行库，官方说明见 [Cubism Core](https://docs.live2d.com/cubism-sdk-manual/cubism-core/)。其使用受 [Live2D Proprietary Software 使用授权协议](https://www.live2d.com/zh-CHS/sdk/download/web/)约束。
+- 使用 Cubism SDK 制作并正式发布内容时，应先查看 [SDK 发行许可（出版许可协议）](https://www.live2d.com/zh-CHS/sdk/license/)；官方说明开发测试阶段无需该许可，个人和小规模事业者在特定条件下可免除许可及费用，但扩展性应用等情形可能不适用。本项目不替用户判断具体发行行为是否符合豁免条件。
 
 ### 内置 Live2D 模型
 
 - 来源：雪熊企划，见[哔哩哔哩主页](https://space.bilibili.com/3546783265327964)。
 - 文件位置：`app/assets/live2d/models/yachiyo/`。该模型随项目提供，与项目自有代码分开授权；根目录的 MIT License 不会把模型文件变成 MIT 许可。
-- 本仓库没有附带该模型的独立许可全文。使用和再分发模型时，请遵循模型权利人发布的规则；不确定是否包含再分发权时，应先向权利人确认。
 
 ## 随项目提供的前端组件与字体
 
