@@ -11,7 +11,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-44A833" alt="MIT License"></a>
 </p>
 
-<h1 align="center">月见八千代 Agent</h1>
+<h1 align="center" style="border-bottom: none;">月见八千代 Agent</h1>
 
 <p align="center">一位住在桌面上的 AI 伙伴</p>
 
@@ -25,9 +25,9 @@
 
 模型服务和 API Key 由你自己选择并配置。应用不内置模型，也不提供模型服务。
 
-本项目的工具调用采用 ReAct 风格的 Agent 循环，基于 LiteLLM 原生 function calling 实现：模型输出 Thought 文本并返回结构化 `tool_calls`，程序执行工具后，把结果作为 `tool` 消息追加回上下文，一次模型请求中可以同时提出多个 `tool_calls` 循环，总轮数不会超过4轮。直到模型不再请求工具后，返回最终结果。
+本项目的工具调用采用 ReAct 风格的 Agent 循环，基于 LiteLLM 原生 function calling 实现：模型输出 Thought 文本并返回结构化 `tool_calls`，程序执行工具后，把结果作为 `tool` 消息追加回上下文，一次模型请求中可以同时提出多个 `tool_calls` 循环，总轮数不会超过4轮。当模型不再请求工具后，返回最终结果。
 
-建议使用[DeepSeek](https://platform.deepseek.com/)所提供的 API 服务。
+建议使用 [DeepSeek](https://platform.deepseek.com/) 所提供的 API 服务。
 
 ## 界面预览
 
