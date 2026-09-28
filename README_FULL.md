@@ -78,8 +78,10 @@ Electron 主进程启动一个只监听本机回环地址的 FastAPI 服务，�
 打包版数据默认放在：
 
 ```text
-%APPDATA%\月见八千代\data\
+%APPDATA%\YachiyoAgent\data\
 ```
+
+从旧版升级时，首次启动会将 `%APPDATA%\月见八千代` 中尚未迁移的数据带到新目录；已有文件不会被覆盖。
 
 开发版默认放在项目根目录的 `.devdata/`。可以通过环境变量 `YACHIYO_DATA_DIR` 指定其他数据目录。
 
