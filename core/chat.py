@@ -13,7 +13,7 @@ from core.paths import resource_path
 log = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 60.0
-DEFAULT_TEMPERATURE = 0.8
+DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_ROUNDS = 4
 
 

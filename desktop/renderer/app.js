@@ -1997,13 +1997,13 @@ function openSettings() {
     const temp = document.createElement("div");
     temp.className = "sect";
     temp.innerHTML = `<div class="sect-title">对话</div>
-      <div class="field"><label>温度（越高越活泼，0.8 比较自然）</label>
-      <input type="range" min="0" max="1.5" step="0.1" value="${state.cfg?.temperature ?? 0.8}" />
-      <div class="hint" id="temp-value">${state.cfg?.temperature ?? 0.8}</div></div>`;
+      <div class="field"><label>温度（越高越活泼，默认 1.0）</label>
+      <input type="range" min="0" max="1.5" step="0.1" value="${state.cfg?.temperature ?? 1.0}" />
+      <div class="hint" id="temp-value">${state.cfg?.temperature ?? 1.0}</div></div>`;
     const range = temp.querySelector("input");
     range.oninput = () => { temp.querySelector("#temp-value").textContent = range.value; };
     range.onchange = async () => {
-      const previous = Number(state.cfg?.temperature ?? 0.8);
+      const previous = Number(state.cfg?.temperature ?? 1.0);
       const requested = Number(range.value);
       try {
         const saved = await api("/api/config", { method: "POST", body: { temperature: requested } });

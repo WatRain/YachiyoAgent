@@ -90,7 +90,7 @@ class AppConfig(BaseModel):
     keep_recent_turns: int = 12
     max_tool_rounds: int = 4
     stream: bool = True
-    temperature: float = 0.8
+    temperature: float = 1.0
 
     # UI 偏好
     # 默认跟随系统：第一次打开不该被硬塞一套配色。
