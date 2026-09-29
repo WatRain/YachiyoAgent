@@ -133,7 +133,7 @@ let win = null;
 let tray = null;
 let isQuitting = false;
 let mainWindowAlwaysOnTop = false;
-let petMousePassthrough = true;
+let petMousePassthrough = readPetMousePassthrough();
 let cursorTimer = null;
 let gazePaused = false;
 
@@ -194,9 +194,30 @@ function readPetBounds() {
 
 function writePetBounds(bounds) {
   try {
-    fs.writeFileSync(petBoundsFile(), JSON.stringify(bounds));
+    let saved = {};
+    try { saved = JSON.parse(fs.readFileSync(petBoundsFile(), "utf8")); } catch { /* 首次写入 */ }
+    fs.writeFileSync(petBoundsFile(), JSON.stringify({ ...saved, ...bounds }));
   } catch {
     /* 位置存不下不该影响功能 */
+  }
+}
+
+function readPetMousePassthrough() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(petBoundsFile(), "utf8"));
+    return typeof saved.mousePassthrough === "boolean" ? saved.mousePassthrough : true;
+  } catch {
+    return true;
+  }
+}
+
+function writePetMousePassthrough(enabled) {
+  try {
+    let saved = {};
+    try { saved = JSON.parse(fs.readFileSync(petBoundsFile(), "utf8")); } catch { /* 首次写入 */ }
+    fs.writeFileSync(petBoundsFile(), JSON.stringify({ ...saved, mousePassthrough: Boolean(enabled) }));
+  } catch {
+    /* 偏好保存失败不影响本次运行 */
   }
 }
 
@@ -333,7 +354,11 @@ function applyPetMousePassthrough(ignore = petMousePassthrough) {
 
 function setPetMousePassthrough(enabled) {
   petMousePassthrough = Boolean(enabled);
+  writePetMousePassthrough(petMousePassthrough);
   applyPetMousePassthrough();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("pet:mouse-passthrough-state", petMousePassthrough);
+  }
   if (tray) tray.setContextMenu(buildTrayMenu());
   log("角色浮窗鼠标穿透：", petMousePassthrough);
 }
@@ -889,9 +914,12 @@ ipcMain.on("pet:setAlwaysOnTop", (_event, flag) => {
   log("角色浮窗置顶：", on);
 });
 
-ipcMain.on("pet:setMousePassthrough", (event, enabled) => {
-  if (event.sender !== petWin?.webContents) return;
-  setPetMousePassthrough(enabled);
+ipcMain.handle("pet:mouse-passthrough", (event, enabled) => {
+  const fromMain = Boolean(win && !win.isDestroyed() && event.sender === win.webContents);
+  const fromPet = Boolean(petWin && !petWin.isDestroyed() && event.sender === petWin.webContents);
+  if (!fromMain && !fromPet) return { ok: false };
+  if (typeof enabled === "boolean") setPetMousePassthrough(enabled);
+  return { ok: true, enabled: petMousePassthrough };
 });
 
 ipcMain.on("pet:launcherHover", (event, hovered) => {

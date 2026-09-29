@@ -20,6 +20,7 @@ const state = {
   token: "",
   ws: null,
   cfg: null,
+  petMousePassthrough: true,
   providers: [],
   presets: [],
   activeProvider: "",
@@ -1889,6 +1890,14 @@ function openSettings() {
         <div class="switch ${state.petDetached ? "on" : ""}" id="pet-detach" role="switch"
              aria-checked="${state.petDetached}" aria-label="脱离到桌面" tabindex="0"></div>
       </div>
+      <div class="pref">
+        <div class="pref-main">
+          <div class="label">鼠标穿透</div>
+          <div class="desc">角色浮窗显示时，鼠标点击可以操作她背后的窗口；关闭后可拖动角色并使用右键菜单</div>
+        </div>
+        <div class="switch ${state.petMousePassthrough ? "on" : ""}" id="pet-mouse-passthrough" role="switch"
+             aria-checked="${state.petMousePassthrough}" aria-label="鼠标穿透" tabindex="0"></div>
+      </div>
       <div class="pref chat-location-pref">
         <div class="pref-main">
           <div class="label">对话位置</div>
@@ -1905,6 +1914,36 @@ function openSettings() {
         <div class="hint" id="pet-size-value">—</div>
       </div>`;
     const detachToggle = who.querySelector("#pet-detach");
+    const passthroughToggle = who.querySelector("#pet-mouse-passthrough");
+    let passthroughRevision = 0;
+    const paintPassthrough = (enabled) => {
+      state.petMousePassthrough = Boolean(enabled);
+      passthroughToggle.classList.toggle("on", state.petMousePassthrough);
+      passthroughToggle.setAttribute("aria-checked", String(state.petMousePassthrough));
+    };
+    const flipPassthrough = async () => {
+      const revision = ++passthroughRevision;
+      const next = !state.petMousePassthrough;
+      paintPassthrough(next);
+      try {
+        const result = await window.yachiyoShell?.petMousePassthrough?.(next);
+        if (!result?.ok) throw new Error("主进程没有响应");
+        if (revision === passthroughRevision) paintPassthrough(result.enabled);
+      } catch {
+        if (revision === passthroughRevision) {
+          paintPassthrough(!next);
+          setStatus("鼠标穿透设置未能应用", true);
+        }
+      }
+    };
+    passthroughToggle.onclick = flipPassthrough;
+    passthroughToggle.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flipPassthrough(); }
+    };
+    const readRevision = passthroughRevision;
+    window.yachiyoShell?.petMousePassthrough?.().then((result) => {
+      if (readRevision === passthroughRevision && result?.ok) paintPassthrough(result.enabled);
+    }).catch(() => {});
     const chatLocationButtons = [...who.querySelectorAll("[data-chat-location]")];
     for (const [index, button] of chatLocationButtons.entries()) {
       button.onclick = () => setChatLocation(button.dataset.chatLocation);
@@ -2528,6 +2567,13 @@ window.yachiyoShell?.onAlwaysOnTop?.((on) => {
   topButton.classList.toggle("on", on);
   topButton.setAttribute("aria-pressed", String(on));
   topButton.title = on ? "取消置顶" : "置于顶层";
+});
+window.yachiyoShell?.onPetMousePassthrough?.((enabled) => {
+  state.petMousePassthrough = enabled;
+  const toggle = $("pet-mouse-passthrough");
+  if (!toggle) return;
+  toggle.classList.toggle("on", enabled);
+  toggle.setAttribute("aria-checked", String(enabled));
 });
 $("btn-settings").onclick = openSettings;
 // 浮窗被关掉（右键菜单 / 主窗口关闭）→ 把开关和面板拨回来，状态栏也别再留着"她在桌面上"

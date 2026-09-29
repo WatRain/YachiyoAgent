@@ -59,7 +59,12 @@ contextBridge.exposeInMainWorld("yachiyoShell", {
   /** 把窗口搬到 (x, y)：浮窗拖动时每帧调一次，主进程会钳制在屏幕内。 */
   petMove: (x, y) => ipcRenderer.send("pet:move", { x, y }),
   /** 让桌面点击穿过角色浮窗；关闭后恢复拖动和右键菜单交互。 */
-  petSetMousePassthrough: (enabled) => ipcRenderer.send("pet:setMousePassthrough", Boolean(enabled)),
+  petMousePassthrough: (enabled) => ipcRenderer.invoke("pet:mouse-passthrough", enabled),
+  onPetMousePassthrough: (callback) => {
+    ipcRenderer.on("pet:mouse-passthrough-state", (_event, enabled) => {
+      try { callback(Boolean(enabled)); } catch { /* 忽略 */ }
+    });
+  },
   /** 穿透开启时，聊天按钮悬停期间暂时恢复鼠标命中。 */
   petLauncherHover: (hovered) => ipcRenderer.send("pet:launcherHover", Boolean(hovered)),
   /** 让主进程把一个 window.yachiyo 调用转发给浮窗里那页（脱离时角色只有那一份）。
