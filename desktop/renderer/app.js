@@ -999,7 +999,7 @@ function petPageUrl(standalone) {
 }
 
 /* 这一行的说明文字有两份（模板里一份、切换时一份），写成常量免得两边说不一样的话。 */
-const PET_DETACH_DESC_ON = "现在在桌面上：按住她可以拖动，右键可以收回或改置顶";
+const PET_DETACH_DESC_ON = "现在在桌面上：鼠标可以穿过她点击桌面；可在任务栏托盘关闭穿透后拖动或右键操作";
 const PET_DETACH_DESC_OFF = "让八千代从右侧面板里出来，变成桌面上一个可以拖动的透明窗口";
 
 /* 切换"角色住哪儿"。三件事必须一起做：界面状态、面板里的 iframe、后端配置。

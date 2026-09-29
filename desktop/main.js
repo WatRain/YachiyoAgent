@@ -133,6 +133,7 @@ let win = null;
 let tray = null;
 let isQuitting = false;
 let mainWindowAlwaysOnTop = false;
+let petMousePassthrough = true;
 let cursorTimer = null;
 let gazePaused = false;
 
@@ -272,6 +273,7 @@ function createPetWindow(url, bounds) {
   });
   // 构造参数里的 alwaysOnTop 只是普通置顶，盖不住任务栏；桌面宠物要的是最高一级
   petWin.setAlwaysOnTop(true, "screen-saver");
+  applyPetMousePassthrough();
 
   petWin.once("ready-to-show", () => {
     if (!petWin || petWin.isDestroyed()) return;
@@ -294,6 +296,7 @@ function createPetWindow(url, bounds) {
     positionPetChatWindow();
   });
   const self = petWin;
+  if (tray) tray.setContextMenu(buildTrayMenu());
   petWin.webContents.on("did-finish-load", () => {
     if (petWin !== self || self.isDestroyed()) return;
     updatePetChatLauncherAvailability();
@@ -301,6 +304,7 @@ function createPetWindow(url, bounds) {
   petWin.on("closed", () => {
     if (petWin !== self) return;  // 已经是另一个浮窗了，别把新的置空
     petWin = null;
+    if (tray) tray.setContextMenu(buildTrayMenu());
     closePetChatWindow("pet-docked");
     if (petBoundsTimer) clearTimeout(petBoundsTimer);
     petBoundsTimer = null;
@@ -320,6 +324,18 @@ function closePetWindow(reason) {
   closePetChatWindow("pet-docked");
   petWin.close();                 // closed 回调里置空并通知渲染层
   return true;
+}
+
+function applyPetMousePassthrough(ignore = petMousePassthrough) {
+  if (!petWin || petWin.isDestroyed()) return;
+  petWin.setIgnoreMouseEvents(Boolean(ignore), { forward: Boolean(ignore) });
+}
+
+function setPetMousePassthrough(enabled) {
+  petMousePassthrough = Boolean(enabled);
+  applyPetMousePassthrough();
+  if (tray) tray.setContextMenu(buildTrayMenu());
+  log("角色浮窗鼠标穿透：", petMousePassthrough);
 }
 
 /** 把聊天小窗放到角色左右有空间的一侧，并在拖动/缩放角色时保持相邻。 */
@@ -577,6 +593,13 @@ function buildTrayMenu() {
       type: "checkbox",
       checked: mainWindowAlwaysOnTop,
       click: (item) => setMainWindowAlwaysOnTop(item.checked),
+    },
+    {
+      label: "鼠标穿透角色浮窗",
+      type: "checkbox",
+      checked: petMousePassthrough,
+      enabled: Boolean(petWin && !petWin.isDestroyed()),
+      click: (item) => setPetMousePassthrough(item.checked),
     },
     {
       label: "显示角色浮窗",
@@ -864,6 +887,17 @@ ipcMain.on("pet:setAlwaysOnTop", (_event, flag) => {
   petWin.setAlwaysOnTop(on, on ? "screen-saver" : "normal");
   if (win && !win.isDestroyed()) win.webContents.send("pet:alwaysOnTop", on);
   log("角色浮窗置顶：", on);
+});
+
+ipcMain.on("pet:setMousePassthrough", (event, enabled) => {
+  if (event.sender !== petWin?.webContents) return;
+  setPetMousePassthrough(enabled);
+});
+
+ipcMain.on("pet:launcherHover", (event, hovered) => {
+  if (event.sender !== petWin?.webContents || !petMousePassthrough) return;
+  // 聊天按钮是浮窗里唯一需要在穿透模式下保留点击能力的控件。
+  applyPetMousePassthrough(!Boolean(hovered));
 });
 
 /** 渲染层 → 浮窗页里的 window.yachiyo 调用（口型、主题、帧率上限…）。 */

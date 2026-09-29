@@ -887,8 +887,13 @@ start().catch((err) => Y.fail(err && err.message ? err.message : err));
     </svg>`;
   document.body.appendChild(chatLauncher);
 
+  let launcherHovered = false;
   shell.onPetChatAvailable?.((available) => {
     chatLauncher.hidden = !available;
+    if (!available && launcherHovered) {
+      launcherHovered = false;
+      shell.petLauncherHover?.(false);
+    }
   });
   chatLauncher.addEventListener("pointerdown", (event) => event.stopPropagation());
   chatLauncher.addEventListener("click", async (event) => {
@@ -900,6 +905,19 @@ start().catch((err) => Y.fail(err && err.message ? err.message : err));
       say("聊天小窗打开失败：" + (error instanceof Error ? error.message : error));
     }
   });
+
+  // 桌面宠物默认开启鼠标穿透。穿过窗口移动时仍会收到 mousemove，
+  // 进入聊天按钮区域就临时关闭穿透，让按钮可以点击；离开后立即恢复。
+  const updateLauncherHover = (event) => {
+    const rect = chatLauncher.getBoundingClientRect();
+    const hovered = !chatLauncher.hidden
+      && event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom;
+    if (hovered === launcherHovered) return;
+    launcherHovered = hovered;
+    shell.petLauncherHover?.(hovered);
+  };
+  addEventListener("mousemove", updateLauncherHover);
 
   /* 1) 主进程转发来的调用。模型没就绪时 lookAt/setMouth 会抛 notReady，
         吞掉即可 —— 下一帧还会再发一次，就绪后自然生效。 */
