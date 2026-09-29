@@ -479,7 +479,9 @@ async function start() {
     antialias: params.get("aa") !== "0",
     powerPreference: params.get("hp") === "0" ? "default" : "high-performance",
     autoDensity: true,
-    resolution: window.devicePixelRatio || 1,
+    // 高 DPI 下限制画布倍率，避免 2x/3x 屏幕把 WebGL 帧缓冲和每帧绘制成本成倍放大。
+    // 1x 屏幕保持原样，1.5x 仍能保留清晰度。
+    resolution: Math.min(window.devicePixelRatio || 1, 1.5),
   });
   document.body.appendChild(app.canvas);
   say("PIXI Application 建好了，canvas=" + app.renderer.width + "x" + app.renderer.height);

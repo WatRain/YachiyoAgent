@@ -2622,6 +2622,9 @@ window.yachiyoShell?.onPetChatClosed?.(({ reason }) => {
     setStatus("角色旁聊天小窗已关闭，已切回主聊天窗口。", true);
     return;
   }
+  // 用户主动收起小窗时只释放它的 renderer；角色旁模式和会话仍然保留，
+  // 角色浮窗上的入口会在下一次点击时重新创建并同步消息。
+  if (reason === "collapsed") return;
   // 用户快速切换模式或收回后又脱离时，旧窗口的关闭事件可能晚于新选择；重新对齐一次。
   setTimeout(() => {
     if (!state.petDetached || state.chatLocation !== "pet") return;

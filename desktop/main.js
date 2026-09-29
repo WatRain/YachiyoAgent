@@ -136,6 +136,8 @@ let mainWindowAlwaysOnTop = false;
 let petMousePassthrough = readPetMousePassthrough();
 let cursorTimer = null;
 let gazePaused = false;
+let lastMainCursorKey = null;
+let lastPetGazeKey = null;
 
 /* ── 角色浮窗：把 Live2D 从右侧面板里"拿出来"，变成桌面上一个透明小窗 ──
  *
@@ -265,6 +267,7 @@ function notifyPetClosed(reason) {
 
 function createPetWindow(url, bounds) {
   if (petWin && !petWin.isDestroyed()) return petWin;
+  lastPetGazeKey = null;
   const b = Object.assign(defaultPetBounds(), readPetBounds() || {}, bounds || {});
   petWin = new BrowserWindow({
     x: b.x,
@@ -325,6 +328,7 @@ function createPetWindow(url, bounds) {
   petWin.on("closed", () => {
     if (petWin !== self) return;  // 已经是另一个浮窗了，别把新的置空
     petWin = null;
+    lastPetGazeKey = null;
     if (tray) tray.setContextMenu(buildTrayMenu());
     closePetChatWindow("pet-docked");
     if (petBoundsTimer) clearTimeout(petBoundsTimer);
@@ -494,12 +498,17 @@ const GAZE_PAD = 0.25;
 
 function cursorLoop() {
   if (cursorTimer) clearInterval(cursorTimer);
+  lastMainCursorKey = null;
+  lastPetGazeKey = null;
   cursorTimer = setInterval(() => {
     try {
+      const hasPet = Boolean(petWin && !petWin.isDestroyed());
+      const hasMain = Boolean(win && !win.isDestroyed() && win.isVisible() && !win.isMinimized());
+      if (!hasPet && !hasMain) return;
       const point = screen.getCursorScreenPoint();
       /* 角色脱离到桌面时，视线由**主进程直接驱动浮窗**：算成浮窗内的画面坐标发过去。
          这样主窗口最小化、被挡住、甚至看不见都不影响跟随（渲染层那边不再插手）。 */
-      if (petWin && !petWin.isDestroyed()) {
+      if (hasPet) {
         if (gazePaused) return;
         const b = petWin.getBounds();
         const x = point.x - b.x;
@@ -507,12 +516,18 @@ function cursorLoop() {
         const padX = b.width * GAZE_PAD;
         const padY = b.height * GAZE_PAD;
         const inside = x >= -padX && y >= -padY && x <= b.width + padX && y <= b.height + padY;
+        const gazeKey = inside ? `${Math.round(x)},${Math.round(y)}` : "forward";
+        if (gazeKey === lastPetGazeKey) return;
+        lastPetGazeKey = gazeKey;
         petWin.webContents.send("pet:cmd", inside
           ? { name: "lookAt", args: [x, y] }
           : { name: "lookForward", args: [] });
         return;
       }
-      if (!win || win.isDestroyed()) return;
+      if (!hasMain) return;
+      const cursorKey = `${point.x},${point.y}`;
+      if (cursorKey === lastMainCursorKey) return;
+      lastMainCursorKey = cursorKey;
       win.webContents.send("cursor", point);
     } catch {
       /* 屏幕接口偶发失败无所谓 */
@@ -773,8 +788,9 @@ ipcMain.on("pet-chat:availability", (event, available) => {
 
 ipcMain.on("pet-chat:collapse", (event) => {
   if (event.sender !== petChatWin?.webContents || !petChatWin || petChatWin.isDestroyed()) return;
-  // 收起只隐藏窗口，保留 chat_location 和同步会话；角色窗上的聊天按钮负责重新展开。
-  petChatWin.hide();
+  // 收起时销毁独立 renderer。主窗口才是会话所有者，重新展开会按现有同步机制
+  // 恢复消息；这样不会让一个隐藏的 Chromium 页面长期占用约 100 MB 内存。
+  closePetChatWindow("collapsed");
   log("角色旁聊天小窗已收起");
 });
 
