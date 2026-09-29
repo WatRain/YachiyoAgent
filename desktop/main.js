@@ -13,7 +13,7 @@
 // 3. **日志写文件，不写 stdout。** 探针阶段踩过：把渲染进程的 console
 //    转发到 stdout，stdout 被外部工具接管后关闭 → EPIPE → Electron 弹一个
 //    原生 "A JavaScript error occurred in the main process" 对话框。
-const { app, BrowserWindow, Menu, ipcMain, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, ipcMain, screen, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { startBackend } = require("./backend.js");
@@ -130,6 +130,8 @@ process.on("unhandledRejection", (err) => log("未处理的 Promise 拒绝：", 
 let backend = null;
 let startupError = "";
 let win = null;
+let tray = null;
+let isQuitting = false;
 let cursorTimer = null;
 let gazePaused = false;
 
@@ -507,6 +509,14 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  // 普通关闭只把主窗口收进系统托盘，托盘里的“退出”才会真正结束应用。
+  win.on("close", (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+    log("主窗口已隐藏到系统托盘");
+  });
+
   if (startupError) {
     win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(
       `<body style="background:#121215;color:#ECECF0;font:14px 'Microsoft YaHei UI';padding:40px">
@@ -523,9 +533,62 @@ function createWindow() {
     win = null;
     if (cursorTimer) clearInterval(cursorTimer);
     cursorTimer = null;
-    // 主窗口关了就一起收摊：不然浮窗还挂着，window-all-closed 不触发、应用退不掉
+    // 只有托盘“退出”才会走到这里；脱离的角色浮窗应继续留到真正退出时再关闭。
     closePetWindow("主窗口关闭");
   });
+}
+
+function showMainWindow({ focus = true } = {}) {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  if (focus) win.focus();
+  return true;
+}
+
+function toggleMainWindow() {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isVisible() && !win.isMinimized()) {
+    win.hide();
+    return true;
+  }
+  return showMainWindow();
+}
+
+function createTray() {
+  if (tray) return tray;
+  tray = new Tray(WINDOW_ICON);
+  tray.setToolTip("YachiyoAgent");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: "显示主窗口",
+      click: () => showMainWindow(),
+    },
+    {
+      label: "显示角色浮窗",
+      click: () => {
+        if (petWin && !petWin.isDestroyed()) {
+          petWin.showInactive();
+          return;
+        }
+        showMainWindow();
+      },
+    },
+    { type: "separator" },
+    {
+      label: "退出 YachiyoAgent",
+      click: () => quitApplication(),
+    },
+  ]));
+  tray.on("click", () => toggleMainWindow());
+  tray.on("double-click", () => showMainWindow());
+  return tray;
+}
+
+function quitApplication() {
+  if (isQuitting) return;
+  isQuitting = true;
+  app.quit();
 }
 
 ipcMain.handle("shell:info", () => {
@@ -814,6 +877,7 @@ ipcMain.on("pet:log", (_event, ...parts) => log("[pet]", ...parts));
 
 app.whenReady().then(async () => {
   log("=== YachiyoAgent 启动 ===", process.versions.electron, process.versions.chrome);
+  createTray();
   try {
     const packaged = app.isPackaged && fs.existsSync(PACKAGED_BACKEND);
     backend = await startBackend({
@@ -835,10 +899,15 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  app.quit();
+  if (!isQuitting) app.quit();
 });
 
 app.on("before-quit", () => {
+  isQuitting = true;
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
   if (cursorTimer) clearInterval(cursorTimer);
   if (backend) {
     log("收摊：关掉后端进程");
