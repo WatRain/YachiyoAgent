@@ -440,6 +440,7 @@ body {
 }
 .winbtn:hover { background: var(--control-hover-bg); color: var(--text); }
 .winbtn:active { transform: scale(.96); }
+.winbtn.on { background: var(--control-hover-bg); color: var(--gold); }
 .winbtn.close:hover { background: var(--danger); color: #fff; }
 
 /* 分段控件（主题切换、设置里的三选一） */

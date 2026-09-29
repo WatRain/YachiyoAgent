@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld("yachiyoShell", {
 
   minimize: () => ipcRenderer.send("win:minimize"),
   close: () => ipcRenderer.send("win:close"),
+  setAlwaysOnTop: (flag) => ipcRenderer.send("win:always-on-top", Boolean(flag)),
+  onAlwaysOnTop: (callback) => {
+    ipcRenderer.on("win:always-on-top", (_event, flag) => {
+      try { callback(Boolean(flag)); } catch { /* 忽略 */ }
+    });
+  },
   setGazePaused: (paused) => ipcRenderer.send("gaze:pause", Boolean(paused)),
 
   /** 往主进程的日志文件里写一行。

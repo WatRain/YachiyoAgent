@@ -132,6 +132,7 @@ let startupError = "";
 let win = null;
 let tray = null;
 let isQuitting = false;
+let mainWindowAlwaysOnTop = false;
 let cursorTimer = null;
 let gazePaused = false;
 
@@ -538,6 +539,16 @@ function createWindow() {
   });
 }
 
+function setMainWindowAlwaysOnTop(flag) {
+  mainWindowAlwaysOnTop = Boolean(flag);
+  if (win && !win.isDestroyed()) {
+    win.setAlwaysOnTop(mainWindowAlwaysOnTop, mainWindowAlwaysOnTop ? "floating" : "normal");
+    win.webContents.send("win:always-on-top", mainWindowAlwaysOnTop);
+  }
+  if (tray) tray.setContextMenu(buildTrayMenu());
+  log("主窗口置顶：", mainWindowAlwaysOnTop);
+}
+
 function showMainWindow({ focus = true } = {}) {
   if (!win || win.isDestroyed()) return false;
   if (win.isMinimized()) win.restore();
@@ -555,14 +566,17 @@ function toggleMainWindow() {
   return showMainWindow();
 }
 
-function createTray() {
-  if (tray) return tray;
-  tray = new Tray(WINDOW_ICON);
-  tray.setToolTip("YachiyoAgent");
-  tray.setContextMenu(Menu.buildFromTemplate([
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
     {
       label: "显示主窗口",
       click: () => showMainWindow(),
+    },
+    {
+      label: "主窗口置于顶层",
+      type: "checkbox",
+      checked: mainWindowAlwaysOnTop,
+      click: (item) => setMainWindowAlwaysOnTop(item.checked),
     },
     {
       label: "显示角色浮窗",
@@ -579,7 +593,14 @@ function createTray() {
       label: "退出 YachiyoAgent",
       click: () => quitApplication(),
     },
-  ]));
+  ]);
+}
+
+function createTray() {
+  if (tray) return tray;
+  tray = new Tray(WINDOW_ICON);
+  tray.setToolTip("YachiyoAgent");
+  tray.setContextMenu(buildTrayMenu());
   tray.on("click", () => toggleMainWindow());
   tray.on("double-click", () => showMainWindow());
   return tray;
@@ -616,6 +637,10 @@ ipcMain.on("gaze:pause", (_event, paused) => {
 
 ipcMain.on("win:minimize", () => {
   if (win && !win.isDestroyed()) win.minimize();
+});
+
+ipcMain.on("win:always-on-top", (_event, flag) => {
+  setMainWindowAlwaysOnTop(flag);
 });
 
 ipcMain.handle("win:pet-detached-layout", (event, payload) => {

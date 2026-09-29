@@ -2519,6 +2519,16 @@ for (const btn of document.querySelectorAll("#theme-quick [data-theme-set]")) {
 }
 $("btn-min").onclick = () => window.yachiyoShell.minimize();
 $("btn-close").onclick = () => window.yachiyoShell.close();
+const topButton = $("btn-top");
+topButton.onclick = () => {
+  const next = topButton.getAttribute("aria-pressed") !== "true";
+  window.yachiyoShell.setAlwaysOnTop(next);
+};
+window.yachiyoShell?.onAlwaysOnTop?.((on) => {
+  topButton.classList.toggle("on", on);
+  topButton.setAttribute("aria-pressed", String(on));
+  topButton.title = on ? "取消置顶" : "置于顶层";
+});
 $("btn-settings").onclick = openSettings;
 // 浮窗被关掉（右键菜单 / 主窗口关闭）→ 把开关和面板拨回来，状态栏也别再留着"她在桌面上"
 window.yachiyoShell?.onPetClosed?.(() => {
